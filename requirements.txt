@@ -1,0 +1,61 @@
+# =========================
+# Core
+# =========================
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+python-dotenv>=1.0.1
+pydantic[email]>=2.6.0
+pydantic-settings>=2.2.1
+
+# =========================
+# Database
+# =========================
+sqlalchemy>=2.0.27
+psycopg[binary]>=3.1.18
+alembic>=1.13.1
+redis>=5.0.1
+
+# =========================
+# Auth
+# =========================
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+python-multipart>=0.0.9
+
+# =========================
+# AI / ML
+# =========================
+openai>=1.12.0
+torch>=2.2.0
+torchvision>=0.17.0
+transformers>=4.38.0
+pillow>=10.2.0
+opencv-python>=4.9.0
+numpy>=1.26.0
+librosa>=0.10.1
+soundfile>=0.12.1
+pydub>=0.25.1
+
+# =========================
+# External APIs
+# =========================
+httpx>=0.27.0
+spotipy>=2.23.0
+google-api-python-client>=2.118.0
+youtube-search-python>=1.6.6
+
+# =========================
+# Async / Background
+# =========================
+aiofiles>=23.2.1
+python-magic>=0.4.27
+celery>=5.3.6
+tenacity>=8.2.3
+
+# =========================
+# Testing
+# =========================
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+# YouTube API
+isodate==0.6.1
