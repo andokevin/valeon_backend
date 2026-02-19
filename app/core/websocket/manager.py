@@ -1,3 +1,4 @@
+# app/core/websocket/manager.py
 from fastapi import WebSocket
 from typing import Dict, Set, Any, Optional, List
 import asyncio

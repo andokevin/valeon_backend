@@ -10,7 +10,7 @@ import string
 from app.core.database import get_db
 from app.core.config import settings
 from app.models import User, Subscription
-from app.models.password import UserPassword
+from app.models.user import UserPassword
 from app.api.dependencies.auth import (
     create_access_token, 
     create_refresh_token,

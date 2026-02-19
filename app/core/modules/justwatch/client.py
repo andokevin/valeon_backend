@@ -1,22 +1,26 @@
-# services/vision/justwatch_client.py
+# app/core/modules/justwatch/client.py
 import httpx
 from typing import Optional, Dict, Any, List
 from app.core.config import settings
-import hashlib
-import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 class JustWatchClient:
+    """
+    Client pour l'API JustWatch (disponibilité streaming).
+    """
+    
     def __init__(self):
         self.base_url = "https://apis.justwatch.com"
         self.user_agent = "Valeon/1.0.0"
-        self.country = "FR"  # Par défaut France, peut être modifié
+        self.country = "FR"  # Par défaut France
         
     async def search_movie(self, query: str, year: Optional[int] = None) -> Optional[Dict]:
         """
-        Recherche un film sur JustWatch pour voir sa disponibilité
+        Recherche un film sur JustWatch pour voir sa disponibilité.
         """
         try:
-            # Construire la requête
             search_payload = {
                 "query": query,
                 "content_types": ["movie"],
@@ -41,51 +45,35 @@ class JustWatchClient:
                 if response.status_code == 200:
                     data = response.json()
                     if data.get("items"):
-                        # Prendre le premier résultat
                         movie = data["items"][0]
-                        
-                        # Récupérer les détails complets
                         return await self._get_movie_details(movie["id"])
                         
         except Exception as e:
-            print(f"Erreur recherche JustWatch: {e}")
+            logger.error(f"Erreur recherche JustWatch: {e}")
         return None
     
-    async def search_tv_show(self, query: str) -> Optional[Dict]:
+    async def search_by_tmdb_id(self, tmdb_id: int) -> Optional[Dict]:
         """
-        Recherche une série TV sur JustWatch
+        Recherche un film par son ID TMDB.
         """
         try:
-            search_payload = {
-                "query": query,
-                "content_types": ["show"],
-                "page_size": 5,
-                "page": 1
-            }
-            
             async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    f"{self.base_url}/content/titles/{self.country}/popular",
-                    json=search_payload,
-                    headers={
-                        "User-Agent": self.user_agent,
-                        "Content-Type": "application/json"
-                    }
+                response = await client.get(
+                    f"{self.base_url}/content/titles/{self.country}/tmdb/{tmdb_id}",
+                    headers={"User-Agent": self.user_agent}
                 )
                 
                 if response.status_code == 200:
                     data = response.json()
-                    if data.get("items"):
-                        show = data["items"][0]
-                        return await self._get_movie_details(show["id"])
-                        
+                    if data:
+                        return await self._get_movie_details(data["id"])
         except Exception as e:
-            print(f"Erreur recherche série JustWatch: {e}")
+            logger.error(f"Erreur recherche par TMDB ID: {e}")
         return None
     
     async def _get_movie_details(self, content_id: int) -> Optional[Dict]:
         """
-        Récupère les détails complets d'un contenu (offres de streaming)
+        Récupère les détails complets d'un contenu (offres de streaming).
         """
         try:
             async with httpx.AsyncClient() as client:
@@ -103,7 +91,7 @@ class JustWatchClient:
                     return {
                         "justwatch_id": content_id,
                         "title": data.get("title"),
-                        "original_title": data.get("original_release_year"),
+                        "original_title": data.get("original_title"),
                         "release_year": data.get("original_release_year"),
                         "age_rating": data.get("age_rating"),
                         "runtime": data.get("runtime"),
@@ -111,16 +99,15 @@ class JustWatchClient:
                         "streaming": streaming_offers,
                         "poster": f"https://images.justwatch.com{data['poster']}" if data.get("poster") else None,
                         "backdrop": f"https://images.justwatch.com{data['backdrop']}" if data.get("backdrop") else None,
-                        "short_description": data.get("short_description"),
-                        "tmdb_id": data.get("tmdb_popularity", {}).get("id")
+                        "short_description": data.get("short_description")
                     }
         except Exception as e:
-            print(f"Erreur détails JustWatch: {e}")
+            logger.error(f"Erreur détails JustWatch: {e}")
         return None
     
     def _parse_offers(self, offers: List[Dict]) -> Dict[str, List[Dict]]:
         """
-        Parse les offres de streaming par type (streaming, rent, buy)
+        Parse les offres de streaming par type.
         """
         result = {
             "streaming": [],  # Abonnement (Netflix, Prime, etc.)
@@ -130,7 +117,6 @@ class JustWatchClient:
         }
         
         for offer in offers:
-            # Déterminer le type d'offre
             monetization_type = offer.get("monetization_type", "unknown")
             package = offer.get("package", {})
             package_name = package.get("name")
@@ -149,7 +135,6 @@ class JustWatchClient:
                 "subtitles": offer.get("subtitles", [])
             }
             
-            # Classer par type
             if monetization_type == "flatrate":
                 result["streaming"].append(offer_data)
             elif monetization_type == "rent":
@@ -160,63 +145,3 @@ class JustWatchClient:
                 result["free"].append(offer_data)
         
         return result
-    
-    async def search_by_tmdb_id(self, tmdb_id: int) -> Optional[Dict]:
-        """
-        Recherche un film par son ID TMDB
-        """
-        try:
-            # D'abord chercher le film
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{self.base_url}/content/titles/{self.country}/tmdb/{tmdb_id}",
-                    headers={"User-Agent": self.user_agent}
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    if data:
-                        return await self._get_movie_details(data["id"])
-        except Exception as e:
-            print(f"Erreur recherche par TMDB ID: {e}")
-        return None
-    
-    async def get_popular_streaming(self, content_type: str = "movie", limit: int = 10) -> List[Dict]:
-        """
-        Récupère les contenus populaires actuellement en streaming
-        """
-        try:
-            search_payload = {
-                "content_types": [content_type],
-                "page_size": limit,
-                "page": 1
-            }
-            
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    f"{self.base_url}/content/titles/{self.country}/popular",
-                    json=search_payload,
-                    headers={
-                        "User-Agent": self.user_agent,
-                        "Content-Type": "application/json"
-                    }
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    results = []
-                    
-                    for item in data.get("items", []):
-                        streaming_offers = self._parse_offers(item.get("offers", []))
-                        results.append({
-                            "justwatch_id": item["id"],
-                            "title": item.get("title"),
-                            "poster": f"https://images.justwatch.com{item['poster']}" if item.get("poster") else None,
-                            "release_year": item.get("original_release_year"),
-                            "streaming": streaming_offers
-                        })
-                    
-                    return results
-        except Exception as e:
-            print(f"Erreur popular streaming: {e}")
-        return []

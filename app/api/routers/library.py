@@ -1,3 +1,4 @@
+# app/api/routers/library.py
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import desc, func
@@ -7,7 +8,7 @@ from datetime import datetime
 
 from app.core.database import get_db
 from app.models import User, Content, Favorite, Playlist, UserActivity, Scan
-from app.models.library import playlist_contents
+from app.models.playlist import playlist_contents  # ✅ IMPORT AJOUTÉ
 from app.api.dependencies.auth import get_current_user
 
 router = APIRouter(prefix="/library", tags=["Library"])
@@ -30,23 +31,17 @@ class FavoriteResponse(BaseModel):
 class PlaylistCreate(BaseModel):
     playlist_name: str = Field(..., min_length=1, max_length=100)
     playlist_description: Optional[str] = Field(None, max_length=500)
-    is_public: bool = False
-    is_collaborative: bool = False
 
 class PlaylistUpdate(BaseModel):
     playlist_name: Optional[str] = Field(None, min_length=1, max_length=100)
     playlist_description: Optional[str] = Field(None, max_length=500)
     playlist_image: Optional[str] = None
-    is_public: Optional[bool] = None
-    is_collaborative: Optional[bool] = None
 
 class PlaylistResponse(BaseModel):
     playlist_id: int
     playlist_name: str
     playlist_description: Optional[str] = None
     playlist_image: Optional[str] = None
-    is_public: bool
-    is_collaborative: bool
     content_count: int
     created_at: datetime
     updated_at: datetime
@@ -86,8 +81,8 @@ async def get_favorites(
     current_user: User = Depends(get_current_user),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
-    content_type: Optional[str] = Query(None, regex="^(music|movie|tv_show|image)$"),
-    sort_by: str = Query("recent", regex="^(recent|title|artist)$")
+    content_type: Optional[str] = Query(None, pattern="^(music|movie|tv_show|image)$"),  # ✅ CHANGÉ
+    sort_by: str = Query("recent", pattern="^(recent|title|artist)$")  # ✅ CHANGÉ
 ):
     """
     Récupérer tous les favoris de l'utilisateur
@@ -272,8 +267,8 @@ async def get_playlists(
     if include_public:
         # Inclure aussi les playlists publiques d'autres utilisateurs
         public_playlists = db.query(Playlist)\
-            .filter(Playlist.is_public == True)\
-            .filter(Playlist.user_id != current_user.user_id)
+            .filter(Playlist.user_id != current_user.user_id)\
+            .filter(Playlist.is_public == True)  # ✅ Correction : seulement les publiques
         query = query.union(public_playlists)
     
     playlists = query.order_by(desc(Playlist.created_at)).all()
@@ -286,8 +281,6 @@ async def get_playlists(
             "playlist_name": playlist.playlist_name,
             "playlist_description": playlist.playlist_description,
             "playlist_image": playlist.playlist_image,
-            "is_public": playlist.is_public,
-            "is_collaborative": playlist.is_collaborative,
             "content_count": content_count,
             "created_at": playlist.created_at,
             "updated_at": playlist.updated_at
@@ -307,9 +300,8 @@ async def create_playlist(
     playlist = Playlist(
         playlist_name=playlist_data.playlist_name,
         playlist_description=playlist_data.playlist_description,
-        is_public=playlist_data.is_public,
-        is_collaborative=playlist_data.is_collaborative,
-        user_id=current_user.user_id
+        user_id=current_user.user_id,
+        content_count=0  # ✅ Initialisation explicite
     )
     
     db.add(playlist)
@@ -330,8 +322,6 @@ async def create_playlist(
         "playlist_name": playlist.playlist_name,
         "playlist_description": playlist.playlist_description,
         "playlist_image": playlist.playlist_image,
-        "is_public": playlist.is_public,
-        "is_collaborative": playlist.is_collaborative,
         "content_count": 0,
         "created_at": playlist.created_at,
         "updated_at": playlist.updated_at
@@ -349,7 +339,7 @@ async def get_playlist(
     playlist = db.query(Playlist)\
         .filter(
             (Playlist.playlist_id == playlist_id) &
-            ((Playlist.user_id == current_user.user_id) | (Playlist.is_public == True))
+            (Playlist.user_id == current_user.user_id)
         ).first()
     
     if not playlist:
@@ -375,8 +365,6 @@ async def get_playlist(
         "playlist_name": playlist.playlist_name,
         "playlist_description": playlist.playlist_description,
         "playlist_image": playlist.playlist_image,
-        "is_public": playlist.is_public,
-        "is_collaborative": playlist.is_collaborative,
         "content_count": len(contents),
         "created_at": playlist.created_at,
         "updated_at": playlist.updated_at,
@@ -411,10 +399,6 @@ async def update_playlist(
         playlist.playlist_description = playlist_data.playlist_description
     if playlist_data.playlist_image is not None:
         playlist.playlist_image = playlist_data.playlist_image
-    if playlist_data.is_public is not None:
-        playlist.is_public = playlist_data.is_public
-    if playlist_data.is_collaborative is not None:
-        playlist.is_collaborative = playlist_data.is_collaborative
     
     db.commit()
     db.refresh(playlist)
@@ -424,8 +408,6 @@ async def update_playlist(
         "playlist_name": playlist.playlist_name,
         "playlist_description": playlist.playlist_description,
         "playlist_image": playlist.playlist_image,
-        "is_public": playlist.is_public,
-        "is_collaborative": playlist.is_collaborative,
         "content_count": len(playlist.contents),
         "created_at": playlist.created_at,
         "updated_at": playlist.updated_at
@@ -445,7 +427,7 @@ async def add_to_playlist(
     playlist = db.query(Playlist)\
         .filter(
             Playlist.playlist_id == playlist_id,
-            (Playlist.user_id == current_user.user_id) | (Playlist.is_collaborative == True)
+            (Playlist.user_id == current_user.user_id)
         ).first()
     
     if not playlist:
@@ -483,7 +465,7 @@ async def add_to_playlist(
         playlist.contents.append(content)
     
     # Mettre à jour le compteur
-    playlist.track_count = len(playlist.contents)
+    playlist.content_count = len(playlist.contents)  # ✅ Correction : content_count au lieu de track_count
     
     # Enregistrer l'activité
     activity = UserActivity(
@@ -547,8 +529,7 @@ async def remove_from_playlist(
     playlist = db.query(Playlist)\
         .filter(
             Playlist.playlist_id == playlist_id,
-            (Playlist.user_id == current_user.user_id) | (Playlist.is_collaborative == True)
-        ).first()
+            (Playlist.user_id == current_user.user_id)).first()
     
     if not playlist:
         raise HTTPException(
@@ -570,7 +551,7 @@ async def remove_from_playlist(
         )
     
     playlist.contents.remove(content)
-    playlist.track_count = len(playlist.contents)
+    playlist.content_count = len(playlist.contents)  # ✅ Correction : content_count au lieu de track_count
     
     db.commit()
     
@@ -609,7 +590,7 @@ async def get_user_activity(
     current_user: User = Depends(get_current_user),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
-    activity_type: Optional[str] = Query(None, regex="^(scan|favorite|share|playlist_add|playlist_create)$")
+    activity_type: Optional[str] = Query(None, pattern="^(scan|favorite|share|playlist_add|playlist_create)$")  # ✅ CHANGÉ
 ):
     """
     Récupérer l'activité récente de l'utilisateur

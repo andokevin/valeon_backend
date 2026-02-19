@@ -1,3 +1,4 @@
+# app/api/routers/websocket.py
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
 from typing import Optional
 import asyncio
@@ -7,7 +8,7 @@ from jose import JWTError, jwt
 from datetime import datetime
 
 from app.core.config import settings
-from app.services.websocket.manager import manager
+from app.core.websocket import manager  # ✅ IMPORT CORRIGÉ
 from app.api.dependencies.auth import get_user_from_token
 
 router = APIRouter(tags=["WebSocket"])
@@ -137,7 +138,7 @@ async def websocket_notifications_endpoint(
             return
         
         # Accepter la connexion
-        await manager.connect(websocket, user_id, "Free")  # Subscription non nécessaire pour notifications
+        await manager.connect(websocket, user_id, "Free")
         
         await websocket.send_json({
             "type": "notifications_ready",

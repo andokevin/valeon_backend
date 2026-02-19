@@ -1,3 +1,4 @@
+# app/api/dependencies/auth.py
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
@@ -9,7 +10,7 @@ from passlib.context import CryptContext
 from app.core.config import settings
 from app.core.database import get_db
 from app.models import User
-from app.models.password import UserPassword
+from app.models.user import UserPassword
 
 # Configuration
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -115,6 +116,39 @@ async def get_current_user(
     
     return user
 
+# ✅ NOUVELLE FONCTION - get_current_user_optional
+async def get_current_user_optional(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db)
+) -> Optional[User]:
+    """
+    Récupère l'utilisateur courant si token valide, sinon retourne None.
+    Utile pour les endpoints qui fonctionnent avec ou sans authentification.
+    """
+    if not token:
+        return None
+    
+    try:
+        payload = jwt.decode(
+            token, 
+            settings.SECRET_KEY, 
+            algorithms=[settings.ALGORITHM]
+        )
+        
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            return None
+        
+        user = db.query(User).filter(User.user_id == int(user_id)).first()
+        
+        if user and user.is_active:
+            return user
+        
+        return None
+        
+    except JWTError:
+        return None
+
 async def get_current_active_user(
     current_user: User = Depends(get_current_user),
 ) -> User:
@@ -156,9 +190,9 @@ def verify_refresh_token(token: str) -> Optional[Dict[str, Any]]:
         return None
     
 async def get_user_from_token(token: str) -> Optional[int]:
-    # """
-    # Extrait l'utilisateur du token JWT pour WebSocket
-    # """
+    """
+    Extrait l'utilisateur du token JWT pour WebSocket
+    """
     try:
         payload = jwt.decode(
             token,
