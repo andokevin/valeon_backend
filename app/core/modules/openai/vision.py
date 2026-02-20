@@ -2,6 +2,7 @@ import asyncio
 import base64
 import os
 import logging
+import json
 from typing import Dict, Any, List, Optional
 from openai import OpenAI
 from app.core.config import settings
@@ -55,8 +56,13 @@ class VisionClient:
                 max_tokens=400,
                 response_format={"type": "json_object"},
             )
-            import json
-            return json.loads(result.choices[0].message.content)
+            # PATCH: Import json déplacé en haut + gestion d'erreur
+            content = result.choices[0].message.content
+            try:
+                return json.loads(content)
+            except json.JSONDecodeError:
+                logger.warning("JSON decode failed, returning raw content")
+                return {"raw_content": content, "parsed": False}
         except Exception as e:
             logger.error(f"Vision analysis error: {e}")
             return self._mock_analyze(file_path)

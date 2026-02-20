@@ -38,6 +38,7 @@ class ChatClient:
             logger.error(f"ChatClient error: {e}")
             return {}
 
+    # Reste du code inchangé - déjà compatible
     async def get_recommendations(
         self,
         user_history: List[Dict[str, Any]],

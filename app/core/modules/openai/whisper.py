@@ -17,10 +17,11 @@ class WhisperClient:
             return self._mock_transcribe(file_path)
         try:
             with open(file_path, "rb") as f:
+                # PATCH: Nouvelle API OpenAI v1.x pour audio
                 result = await asyncio.to_thread(
                     self.client.audio.transcriptions.create,
                     model=self.model,
-                    file=f,
+                    file=("audio", f, "audio/mpeg"),  # Format correct avec tuple (filename, file, mime)
                     response_format="text",
                 )
             return result.strip() if result else ""
@@ -33,24 +34,26 @@ class WhisperClient:
             return {"text": self._mock_transcribe(file_path), "segments": []}
         try:
             with open(file_path, "rb") as f:
+                # PATCH: Nouvelle API avec timestamp_granularities
                 result = await asyncio.to_thread(
                     self.client.audio.transcriptions.create,
                     model=self.model,
-                    file=f,
+                    file=("audio", f, "audio/mpeg"),
                     response_format="verbose_json",
                     timestamp_granularities=["segment"],
                 )
+            # PATCH: Accès sûr aux attributs avec getattr
             return {
-                "text": result.text or "",
+                "text": getattr(result, "text", "") or "",
                 "language": getattr(result, "language", "unknown"),
-                "duration": getattr(result, "duration", 0),
+                "duration": getattr(result, "duration", 0) or 0,
                 "segments": [
                     {
-                        "start": s.get("start", 0),
-                        "end": s.get("end", 0),
-                        "text": s.get("text", ""),
+                        "start": seg.get("start", 0) if hasattr(seg, 'start') else getattr(seg, 'start', 0),
+                        "end": seg.get("end", 0) if hasattr(seg, 'end') else getattr(seg, 'end', 0),
+                        "text": seg.get("text", "") if hasattr(seg, 'text') else getattr(seg, 'text', ""),
                     }
-                    for s in (getattr(result, "segments", []) or [])
+                    for seg in (getattr(result, "segments", []) or [])
                 ],
             }
         except Exception as e:
