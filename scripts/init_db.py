@@ -1,33 +1,26 @@
 #!/usr/bin/env python3
-"""
-Script de synchronisation des tables
-"""
-import sys
-import os
-import enum
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(current_dir)
-sys.path.insert(0, project_root)
+from app.core.database import engine, Base
+from app.models import *
+from app.models import Subscription
+from sqlalchemy.orm import Session
 
-print(f"📂 Dossier racine: {project_root}")
-
-from app.core.database import engine
-from app.models import Base  # ← Maintenant Base vient des modèles !
-from sqlalchemy import inspect
-
-def sync_database():
+def init():
     print("📦 Création des tables...")
-    
-    tables_in_metadata = list(Base.metadata.tables.keys())
-    print(f"📊 Modèles trouvés: {tables_in_metadata}")
-    
     Base.metadata.create_all(bind=engine)
-    print("✅ Tables créées!")
-    
-    inspector = inspect(engine)
-    tables_in_db = inspector.get_table_names()
-    print(f"📊 Tables dans la DB: {tables_in_db}")
+    print(f"✅ Tables créées: {list(Base.metadata.tables.keys())}")
+
+    with Session(engine) as db:
+        if db.query(Subscription).count() == 0:
+            db.add_all([
+                Subscription(subscription_name="Free",    subscription_price=0,     subscription_duration=0,  max_scans_per_day=5,   max_scans_per_month=50,   is_premium=False),
+                Subscription(subscription_name="Basic",   subscription_price=4.99,  subscription_duration=30, max_scans_per_day=20,  max_scans_per_month=200,  is_premium=False),
+                Subscription(subscription_name="Premium", subscription_price=9.99,  subscription_duration=30, max_scans_per_day=999, max_scans_per_month=9999, is_premium=True),
+            ])
+            db.commit()
+            print("✅ Abonnements par défaut créés (Free / Basic / Premium)")
 
 if __name__ == "__main__":
-    sync_database()
+    init()

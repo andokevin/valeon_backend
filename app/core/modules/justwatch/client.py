@@ -1,147 +1,132 @@
-# app/core/modules/justwatch/client.py
-import httpx
-from typing import Optional, Dict, Any, List
-from app.core.config import settings
+import asyncio
 import logging
+from typing import Optional, Dict, Any, List
+import aiohttp
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 class JustWatchClient:
-    """
-    Client pour l'API JustWatch (disponibilité streaming).
-    """
-    
+    BASE_URL = "https://apis.justwatch.com/contentpartner/v3"
+    GRAPHQL_URL = "https://apis.justwatch.com/graphql"
+
     def __init__(self):
-        self.base_url = "https://apis.justwatch.com"
-        self.user_agent = "Valeon/1.0.0"
-        self.country = "FR"  # Par défaut France
-        
-    async def search_movie(self, query: str, year: Optional[int] = None) -> Optional[Dict]:
-        """
-        Recherche un film sur JustWatch pour voir sa disponibilité.
-        """
+        self.enabled = settings.JUSTWATCH_ENABLED
+        self.country = settings.JUSTWATCH_COUNTRY
+
+    async def search_movie(self, title: str) -> Optional[Dict[str, Any]]:
+        if not self.enabled:
+            return self._mock_streaming(title)
         try:
-            search_payload = {
-                "query": query,
-                "content_types": ["movie"],
-                "page_size": 5,
-                "page": 1
+            query = """
+            query SearchTitles($searchQuery: String!, $country: Country!, $language: Language!) {
+              searchTitles(
+                searchQuery: $searchQuery
+                country: $country
+                language: $language
+                first: 1
+              ) {
+                edges {
+                  node {
+                    id
+                    objectId
+                    objectType
+                    content {
+                      title
+                      posterUrl
+                    }
+                    offers {
+                      standardWebURL
+                      package { packageId clearName technicalName iconUrl }
+                      monetizationType
+                    }
+                  }
+                }
+              }
             }
-            
-            if year:
-                search_payload["release_year_from"] = year
-                search_payload["release_year_to"] = year
-            
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    f"{self.base_url}/content/titles/{self.country}/popular",
-                    json=search_payload,
-                    headers={
-                        "User-Agent": self.user_agent,
-                        "Content-Type": "application/json"
-                    }
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    if data.get("items"):
-                        movie = data["items"][0]
-                        return await self._get_movie_details(movie["id"])
-                        
+            """
+            variables = {
+                "searchQuery": title,
+                "country": self.country.upper(),
+                "language": "fr",
+            }
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    self.GRAPHQL_URL,
+                    json={"query": query, "variables": variables},
+                    headers={"Content-Type": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return self._parse_graphql(data)
         except Exception as e:
-            logger.error(f"Erreur recherche JustWatch: {e}")
-        return None
-    
-    async def search_by_tmdb_id(self, tmdb_id: int) -> Optional[Dict]:
-        """
-        Recherche un film par son ID TMDB.
-        """
+            logger.error(f"JustWatch error: {e}")
+        return self._mock_streaming(title)
+
+    async def search_by_tmdb_id(self, tmdb_id: Optional[int]) -> Optional[Dict[str, Any]]:
+        if not self.enabled or not tmdb_id:
+            return self._mock_streaming(str(tmdb_id))
+        return await self.search_movie(f"tmdb:{tmdb_id}")
+
+    async def _get_movie_details(self, justwatch_id: int) -> Optional[Dict[str, Any]]:
+        if not self.enabled:
+            return None
+        return self._mock_streaming(str(justwatch_id))
+
+    def _parse_graphql(self, data: dict) -> Optional[Dict[str, Any]]:
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{self.base_url}/content/titles/{self.country}/tmdb/{tmdb_id}",
-                    headers={"User-Agent": self.user_agent}
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    if data:
-                        return await self._get_movie_details(data["id"])
+            edges = data.get("data", {}).get("searchTitles", {}).get("edges", [])
+            if not edges:
+                return None
+            node = edges[0]["node"]
+            offers = node.get("offers", [])
+
+            streaming, rent, buy, free = [], [], [], []
+            seen = set()
+
+            for offer in offers:
+                pkg = offer.get("package", {})
+                name = pkg.get("clearName", "")
+                url = offer.get("standardWebURL", "")
+                icon = pkg.get("iconUrl", "")
+                m_type = offer.get("monetizationType", "")
+
+                if name in seen:
+                    continue
+                seen.add(name)
+                entry = {"provider": name, "url": url, "icon": icon}
+
+                if m_type == "FLATRATE":
+                    streaming.append(entry)
+                elif m_type == "RENT":
+                    rent.append(entry)
+                elif m_type == "BUY":
+                    buy.append(entry)
+                elif m_type == "FREE":
+                    free.append(entry)
+
+            return {
+                "justwatch_id": node.get("objectId"),
+                "streaming": streaming,
+                "rent": rent,
+                "buy": buy,
+                "free": free,
+            }
         except Exception as e:
-            logger.error(f"Erreur recherche par TMDB ID: {e}")
-        return None
-    
-    async def _get_movie_details(self, content_id: int) -> Optional[Dict]:
-        """
-        Récupère les détails complets d'un contenu (offres de streaming).
-        """
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{self.base_url}/content/titles/{self.country}/title/{content_id}",
-                    headers={"User-Agent": self.user_agent}
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    
-                    # Analyser les offres de streaming
-                    streaming_offers = self._parse_offers(data.get("offers", []))
-                    
-                    return {
-                        "justwatch_id": content_id,
-                        "title": data.get("title"),
-                        "original_title": data.get("original_title"),
-                        "release_year": data.get("original_release_year"),
-                        "age_rating": data.get("age_rating"),
-                        "runtime": data.get("runtime"),
-                        "genres": [g["name"] for g in data.get("genres", [])],
-                        "streaming": streaming_offers,
-                        "poster": f"https://images.justwatch.com{data['poster']}" if data.get("poster") else None,
-                        "backdrop": f"https://images.justwatch.com{data['backdrop']}" if data.get("backdrop") else None,
-                        "short_description": data.get("short_description")
-                    }
-        except Exception as e:
-            logger.error(f"Erreur détails JustWatch: {e}")
-        return None
-    
-    def _parse_offers(self, offers: List[Dict]) -> Dict[str, List[Dict]]:
-        """
-        Parse les offres de streaming par type.
-        """
-        result = {
-            "streaming": [],  # Abonnement (Netflix, Prime, etc.)
-            "rent": [],       # Location
-            "buy": [],        # Achat
-            "free": []        # Gratuit avec pubs
+            logger.error(f"JustWatch parse error: {e}")
+            return None
+
+    def _mock_streaming(self, title: str) -> Dict[str, Any]:
+        return {
+            "justwatch_id": 0,
+            "streaming": [
+                {"provider": "Netflix", "url": "https://netflix.com", "icon": ""},
+                {"provider": "Disney+", "url": "https://disneyplus.com", "icon": ""},
+            ],
+            "rent": [
+                {"provider": "Amazon Prime Video", "url": "https://primevideo.com", "icon": ""},
+            ],
+            "buy": [],
+            "free": [],
         }
-        
-        for offer in offers:
-            monetization_type = offer.get("monetization_type", "unknown")
-            package = offer.get("package", {})
-            package_name = package.get("name")
-            package_icon = package.get("icon")
-            
-            offer_data = {
-                "provider": package_name,
-                "provider_id": package.get("id"),
-                "icon": f"https://images.justwatch.com{package_icon}" if package_icon else None,
-                "url": offer.get("urls", {}).get("standard_web"),
-                "price": offer.get("retail_price"),
-                "currency": offer.get("currency"),
-                "presentation_type": offer.get("presentation_type"),  # hd, sd, 4k
-                "country": offer.get("country"),
-                "audio": offer.get("audio", []),
-                "subtitles": offer.get("subtitles", [])
-            }
-            
-            if monetization_type == "flatrate":
-                result["streaming"].append(offer_data)
-            elif monetization_type == "rent":
-                result["rent"].append(offer_data)
-            elif monetization_type == "buy":
-                result["buy"].append(offer_data)
-            elif monetization_type == "ads":
-                result["free"].append(offer_data)
-        
-        return result

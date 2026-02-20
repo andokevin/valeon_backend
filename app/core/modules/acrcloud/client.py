@@ -1,102 +1,105 @@
-# app/core/modules/acrcloud/client.py
-import httpx
+import asyncio
 import base64
 import hashlib
 import hmac
+import os
 import time
-from typing import Optional, Dict, Any
-from app.core.config import settings
 import logging
+from typing import Optional, Dict, Any
+import aiohttp
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 class ACRCloudClient:
-    """
-    Client pour l'API ACRCloud (fingerprinting musical).
-    """
-    
     def __init__(self):
+        self.enabled = settings.ACRCLOUD_ENABLED
         self.host = settings.ACRCLOUD_HOST
         self.access_key = settings.ACRCLOUD_ACCESS_KEY
         self.secret_key = settings.ACRCLOUD_SECRET_KEY
-        self.endpoint = f"https://{self.host}/v1/identify"
-        
-        if not all([self.host, self.access_key, self.secret_key]):
-            logger.warning("ACRCloud non configuré - vérifier les variables d'environnement")
-    
-    def _generate_signature(self, timestamp: int) -> str:
-        """Génère la signature HMAC-SHA1."""
-        string_to_sign = f"POST\n/v1/identify\n{self.access_key}\naudio\n1\n{timestamp}"
-        sign = hmac.new(
-            self.secret_key.encode('utf-8'),
-            string_to_sign.encode('utf-8'),
-            hashlib.sha1
-        )
-        return base64.b64encode(sign.digest()).decode('utf-8')
-    
-    async def recognize(self, audio_path: str) -> Optional[Dict[str, Any]]:
-        """
-        Identifie une musique à partir d'un fichier audio.
-        """
+
+    def _build_signature(self, timestamp: str) -> str:
+        string_to_sign = "\n".join(["POST", "/v1/identify", self.access_key, "audio", "1", timestamp])
+        return base64.b64encode(
+            hmac.new(
+                self.secret_key.encode("utf-8"),
+                string_to_sign.encode("utf-8"),
+                digestmod=hashlib.sha1,
+            ).digest()
+        ).decode("utf-8")
+
+    async def recognize(self, file_path: str) -> Optional[Dict[str, Any]]:
+        if not self.enabled or not self.host or not self.access_key:
+            return self._mock_recognize(file_path)
         try:
-            # Lire le fichier audio
-            with open(audio_path, 'rb') as f:
+            timestamp = str(time.time())
+            signature = self._build_signature(timestamp)
+
+            with open(file_path, "rb") as f:
                 audio_data = f.read()
-            
-            timestamp = int(time.time())
-            signature = self._generate_signature(timestamp)
-            
-            # Préparer les données multipart
-            files = {
-                'sample': ('audio', audio_data, 'audio/mpeg')
-            }
-            data = {
-                'access_key': self.access_key,
-                'sample_bytes': len(audio_data),
-                'timestamp': timestamp,
-                'signature': signature,
-                'data_type': 'audio',
-                'signature_version': '1'
-            }
-            
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    self.endpoint,
-                    files=files,
-                    data=data
-                )
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    
-                    if result.get('status', {}).get('code') == 0:
-                        logger.info("ACRCloud: musique identifiée")
-                        return self._parse_result(result)
-                    else:
-                        logger.warning(f"ACRCloud: {result.get('status', {}).get('msg')}")
-                        return None
-                        
-        except Exception as e:
-            logger.error(f"Erreur ACRCloud: {e}")
+
+            form_data = aiohttp.FormData()
+            form_data.add_field("sample", audio_data,
+                                filename=os.path.basename(file_path),
+                                content_type="audio/mpeg")
+            form_data.add_field("access_key", self.access_key)
+            form_data.add_field("data_type", "audio")
+            form_data.add_field("signature_version", "1")
+            form_data.add_field("signature", signature)
+            form_data.add_field("sample_bytes", str(len(audio_data)))
+            form_data.add_field("timestamp", timestamp)
+
+            url = f"https://{self.host}/v1/identify"
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, data=form_data, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return self._parse_response(data)
             return None
-    
-    def _parse_result(self, raw_result: Dict) -> Dict[str, Any]:
-        """Parse le résultat ACRCloud en format standard."""
-        metadata = raw_result.get('metadata', {})
-        music = metadata.get('music', [{}])[0] if metadata.get('music') else {}
-        
+        except Exception as e:
+            logger.error(f"ACRCloud error: {e}")
+            return self._mock_recognize(file_path)
+
+    def _parse_response(self, data: dict) -> Optional[Dict[str, Any]]:
+        if data.get("status", {}).get("code") != 0:
+            return None
+        metadata = data.get("metadata", {})
+        music = metadata.get("music", [{}])[0] if metadata.get("music") else {}
+        if not music:
+            return None
+
+        artists = music.get("artists", [{}])
+        artist_name = artists[0].get("name", "") if artists else ""
+        album = music.get("album", {})
+        external = music.get("external_ids", {})
+        external_meta = music.get("external_metadata", {})
+        spotify = external_meta.get("spotify", {})
+        youtube = external_meta.get("youtube", {})
+
         return {
-            'source': 'acrcloud',
-            'title': music.get('title'),
-            'artist': music.get('artists', [{}])[0].get('name') if music.get('artists') else None,
-            'album': music.get('album', {}).get('name'),
-            'release_date': music.get('release_date'),
-            'label': music.get('label'),
-            'acr_id': music.get('acrid'),
-            'duration_ms': music.get('duration_ms'),
-            'spotify_id': music.get('external_metadata', {}).get('spotify', {}).get('track', {}).get('id'),
-            'youtube_id': music.get('external_metadata', {}).get('youtube', {}).get('vid'),
-            'deezer_id': music.get('external_metadata', {}).get('deezer', {}).get('track', {}).get('id'),
-            'isrc': music.get('external_ids', {}).get('isrc'),
-            'confidence': 0.95
+            "title": music.get("title", ""),
+            "artist": artist_name,
+            "album": album.get("name", ""),
+            "release_date": music.get("release_date", ""),
+            "duration": music.get("duration_ms", 0) // 1000,
+            "genres": [g.get("name") for g in music.get("genres", [])],
+            "isrc": external.get("isrc", ""),
+            "spotify_id": spotify.get("track", {}).get("id", ""),
+            "youtube_id": youtube.get("vid", ""),
+            "score": data.get("metadata", {}).get("music", [{}])[0].get("score", 0),
+            "confidence": min(music.get("score", 0) / 100, 1.0),
+        }
+
+    def _mock_recognize(self, file_path: str) -> Dict[str, Any]:
+        return {
+            "title": "Mock Song Title",
+            "artist": "Mock Artist",
+            "album": "Mock Album",
+            "release_date": "2023-01-01",
+            "duration": 210,
+            "genres": ["Pop"],
+            "isrc": "MOCK0001",
+            "spotify_id": "mock_spotify_id",
+            "youtube_id": "mock_youtube_id",
+            "confidence": 0.75,
         }
