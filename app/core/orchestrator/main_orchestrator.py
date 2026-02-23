@@ -17,6 +17,7 @@ class MainOrchestrator:
 
     async def process_scan(self, file_path: str, media_type: str, user: User, db) -> Dict[str, Any]:
         await self.sub_mgr.check_scan_permission(user, media_type, db)
+        
         if media_type == "audio":
             result = await self.audio.process_audio(file_path, user, db)
         elif media_type == "image":
@@ -25,5 +26,6 @@ class MainOrchestrator:
             result = await self.video.process_video(file_path, user, db)
         else:
             raise ValueError(f"Type inconnu: {media_type}")
+            
         await self.sub_mgr.track_scan(user, media_type, db)
         return result

@@ -1,0 +1,291 @@
+import asyncio
+import json
+import logging
+from typing import Dict, Any, Optional, List
+from openai import OpenAI
+from app.core.config import settings
+
+logger = logging.getLogger(__name__)
+
+class DecisionEngine:
+    def __init__(self):
+        """Initialise le moteur de décision avec le client OpenAI."""
+        self.client = None
+        self._init_client()
+    
+    def _init_client(self):
+        """Initialise le client OpenAI de manière sécurisée."""
+        if settings.OPENAI_API_KEY:
+            try:
+                self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
+                logger.info("DecisionEngine: Client OpenAI initialisé avec succès")
+            except Exception as e:
+                logger.error(f"DecisionEngine: Erreur lors de l'initialisation du client OpenAI: {e}")
+                self.client = None
+        else:
+            logger.warning("DecisionEngine: OPENAI_API_KEY non configurée, mode dégradé activé")
+            self.client = None
+    
+    def _is_client_available(self) -> bool:
+        """Vérifie si le client OpenAI est disponible."""
+        return self.client is not None and settings.OPENAI_API_KEY is not None
+
+    async def _chat(self, messages: list, model: str = None, max_tokens: int = 300) -> dict:
+        """Effectue une requête de chat à l'API OpenAI."""
+        if not self._is_client_available():
+            logger.debug("DecisionEngine: Client OpenAI non disponible, retour par défaut")
+            return {}
+        
+        model = model or settings.OPENAI_DEFAULT_MODEL
+        
+        try:
+            response = await asyncio.to_thread(
+                self._sync_chat_completion,
+                model=model,
+                messages=messages,
+                max_tokens=max_tokens
+            )
+            
+            if response and response.choices and len(response.choices) > 0:
+                content = response.choices[0].message.content
+                if content:
+                    return json.loads(content)
+            
+            logger.warning("DecisionEngine: Réponse vide ou invalide de l'API")
+            return {}
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"DecisionEngine: Erreur de parsing JSON: {e}")
+            return {}
+        except Exception as e:
+            logger.error(f"DecisionEngine: Erreur lors de l'appel API: {e}")
+            return {}
+    
+    def _sync_chat_completion(self, model: str, messages: list, max_tokens: int):
+        """Version synchrone de l'appel API OpenAI."""
+        try:
+            return self.client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=0.3,
+                max_tokens=max_tokens,
+                response_format={"type": "json_object"}
+            )
+        except Exception as e:
+            logger.error(f"DecisionEngine: Erreur dans _sync_chat_completion: {e}")
+            raise
+
+    async def analyze_audio_transcript(self, transcript: str) -> Dict[str, Any]:
+        """
+        Analyse une transcription audio pour déterminer son type et son contenu.
+        """
+        # MODIFICATION: Forcer should_use_acrcloud à True même sans OpenAI
+        default = {
+            "content_type": "unknown",
+            "confidence": 0.0,
+            "should_use_acrcloud": True,  # ← CHANGÉ: False → True
+            "is_dialogue": False,
+            "possible_title": None,
+            "possible_artist": None
+        }
+        
+        if not transcript or not transcript.strip():
+            logger.debug("DecisionEngine: Transcription vide, retour par défaut avec ACRCloud")
+            return default
+        
+        if not self._is_client_available():
+            logger.debug("DecisionEngine: Client OpenAI non disponible, utilisation d'ACRCloud par défaut")
+            return default
+        
+        # Tronquer la transcription si elle est trop longue
+        truncated_transcript = transcript[:500] if len(transcript) > 500 else transcript
+        
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Tu es un expert en analyse audio. Réponds uniquement avec un objet JSON "
+                    "contenant les champs suivants : content_type, confidence, should_use_acrcloud, "
+                    "is_dialogue, possible_title, possible_artist. "
+                    "content_type peut être 'music', 'speech', 'podcast', 'interview', ou 'other'. "
+                    "confidence est un nombre entre 0 et 1."
+                )
+            },
+            {
+                "role": "user",
+                "content": f'Analyse cette transcription audio: "{truncated_transcript}"'
+            }
+        ]
+        
+        result = await self._chat(messages)
+        return {**default, **result}
+
+    async def analyze_image_content(self, description: str) -> Dict[str, Any]:
+        """
+        Analyse une description d'image pour déterminer son type et son contenu.
+        """
+        default = {
+            "content_type": "other",
+            "confidence": 0.0,
+            "should_enrich": False,
+            "possible_title": None,
+            "possible_artist": None,
+            "possible_year": None
+        }
+        
+        if not description or not description.strip():
+            logger.debug("DecisionEngine: Description vide, retour par défaut")
+            return default
+        
+        if not self._is_client_available():
+            logger.debug("DecisionEngine: Client OpenAI non disponible, retour par défaut")
+            return default
+        
+        truncated_description = description[:500] if len(description) > 500 else description
+        
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Tu es un expert en analyse d'images. Réponds uniquement avec un objet JSON "
+                    "contenant : content_type, confidence, should_enrich, possible_title, "
+                    "possible_artist, possible_year. content_type peut être 'album_cover', "
+                    "'movie_poster', 'artwork', 'photo', ou 'other'."
+                )
+            },
+            {
+                "role": "user",
+                "content": f'Analyse cette description d\'image: "{truncated_description}"'
+            }
+        ]
+        
+        result = await self._chat(messages)
+        return {**default, **result}
+
+    async def merge_audio_results(
+        self, 
+        transcript: str, 
+        acr_result: Optional[dict], 
+        spotify_result: Optional[dict]
+    ) -> dict:
+        """
+        Fusionne les résultats de différentes sources audio.
+        """
+        default = {
+            "title": acr_result.get("title") if acr_result else None,
+            "artist": acr_result.get("artist") if acr_result else None,
+            "type": "music" if acr_result else "unknown",
+            "confidence": 0.5,
+            "metadata": acr_result or {},
+            "external_links": {}
+        }
+        
+        if not self._is_client_available():
+            logger.debug("DecisionEngine: Client non disponible pour fusion audio, utilisation des résultats bruts")
+            return default
+        
+        if not acr_result and not spotify_result:
+            return default
+        
+        # Préparer les données pour l'analyse
+        truncated_transcript = transcript[:200] if transcript else ""
+        acr_json = json.dumps(acr_result) if acr_result else "null"
+        spotify_json = json.dumps(spotify_result) if spotify_result else "null"
+        
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Tu es un expert en fusion de données multimédia. Réponds uniquement avec un "
+                    "objet JSON contenant : title, artist, type, confidence, metadata, external_links. "
+                    "Utilise les données fournies pour déterminer le contenu le plus probable."
+                )
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Transcription: {truncated_transcript}\n"
+                    f"ACR: {acr_json}\n"
+                    f"Spotify: {spotify_json}\n"
+                    "Fusionne ces données pour identifier le contenu audio."
+                )
+            }
+        ]
+        
+        result = await self._chat(
+            messages, 
+            model=settings.OPENAI_ADVANCED_MODEL, 
+            max_tokens=500
+        )
+        
+        return {**default, **result}
+
+    async def merge_video_results(
+        self, 
+        audio_transcript: str, 
+        vision_results: List[dict], 
+        tmdb_result: Optional[dict]
+    ) -> dict:
+        """
+        Fusionne les résultats audio, vision et TMDB pour du contenu vidéo.
+        """
+        default = {
+            "title": tmdb_result.get("title") if tmdb_result else None,
+            "type": "movie" if tmdb_result else "unknown",
+            "confidence": 0.5,
+            "description": tmdb_result.get("description") if tmdb_result else None,
+            "metadata": tmdb_result or {}
+        }
+        
+        if not self._is_client_available():
+            logger.debug("DecisionEngine: Client non disponible pour fusion vidéo")
+            return default
+        
+        truncated_transcript = audio_transcript[:200] if audio_transcript else ""
+        vision_sample = json.dumps(vision_results[:2]) if vision_results else "[]"
+        tmdb_json = json.dumps(tmdb_result) if tmdb_result else "null"
+        
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Tu es un expert en analyse vidéo. Réponds uniquement avec un objet JSON "
+                    "contenant : title, type, year, description, confidence, metadata. "
+                    "type peut être 'movie', 'tv_show', 'music_video', 'documentary', ou 'other'."
+                )
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Audio: {truncated_transcript}\n"
+                    f"Vision: {vision_sample}\n"
+                    f"TMDB: {tmdb_json}\n"
+                    "Fusionne ces données pour identifier le contenu vidéo."
+                )
+            }
+        ]
+        
+        result = await self._chat(
+            messages,
+            model=settings.OPENAI_ADVANCED_MODEL,
+            max_tokens=500
+        )
+        
+        return {**default, **result}
+
+
+# Fonction utilitaire pour tester la configuration
+def test_decision_engine_config():
+    """Teste la configuration du DecisionEngine."""
+    engine = DecisionEngine()
+    if engine._is_client_available():
+        logger.info("✓ DecisionEngine: Configuration OpenAI valide")
+        return True
+    else:
+        logger.warning("✗ DecisionEngine: Configuration OpenAI invalide ou manquante (mode ACRCloud uniquement)")
+        return False
+
+
+# Exécuter le test au chargement
+if __name__ != "__main__":
+    test_decision_engine_config()

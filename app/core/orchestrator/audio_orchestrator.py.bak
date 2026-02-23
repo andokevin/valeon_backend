@@ -1,0 +1,85 @@
+from typing import Dict, Any
+import logging
+from app.core.modules.openai.whisper import WhisperClient
+from app.core.modules.acrcloud.client import ACRCloudClient
+from app.core.modules.spotify.client import SpotifyClient
+from app.core.modules.youtube.client import YouTubeClient
+from app.core.orchestrator.decision_engine import DecisionEngine
+from app.core.config import settings
+from app.models import User
+
+logger = logging.getLogger(__name__)
+
+class AudioOrchestrator:
+    def __init__(self):
+        self.whisper = WhisperClient()
+        # MODIFICATION: Initialiser ACRCloud même si les clés ne sont pas dans settings (elles seront vérifiées dans le client)
+        self.acrcloud = ACRCloudClient()
+        self.spotify = SpotifyClient() if settings.SPOTIFY_ENABLED else None
+        self.youtube = YouTubeClient() if settings.YOUTUBE_ENABLED else None
+        self.engine = DecisionEngine()
+
+    async def process_audio(self, file_path: str, user: User, db) -> Dict[str, Any]:
+        logger.info(f"AudioOrchestrator: Traitement de {file_path}")
+        
+        # Transcription Whisper
+        transcript = await self.whisper.transcribe(file_path)
+        logger.info(f"AudioOrchestrator: Transcription obtenue ({len(transcript)} caractères)")
+        
+        # Analyse par DecisionEngine
+        analysis = await self.engine.analyze_audio_transcript(transcript)
+        logger.info(f"AudioOrchestrator: Analyse - should_use_acrcloud={analysis.get('should_use_acrcloud')}")
+
+        acr_result = spotify_result = youtube_result = None
+
+        # MODIFICATION: Toujours essayer ACRCloud si disponible
+        if self.acrcloud:
+            logger.info("AudioOrchestrator: Appel ACRCloud...")
+            acr_result = await self.acrcloud.recognize(file_path)
+            
+            if acr_result and acr_result.get("title") != "Mock Song Title":
+                logger.info(f"AudioOrchestrator: ACRCloud a trouvé '{acr_result.get('title')}' par '{acr_result.get('artist')}'")
+                
+                # Enrichissement Spotify
+                if acr_result.get("spotify_id") and self.spotify:
+                    logger.info(f"AudioOrchestrator: Enrichissement Spotify pour {acr_result.get('spotify_id')}")
+                    spotify_result = await self.spotify.get_track(
+                        acr_result["spotify_id"]
+                    )
+                
+                # Enrichissement YouTube
+                if self.youtube:
+                    title = acr_result.get("title", "")
+                    artist = acr_result.get("artist", "")
+                    if title and artist:
+                        logger.info(f"AudioOrchestrator: Recherche YouTube pour {artist} - {title}")
+                        youtube_result = await self.youtube.search_music_video(
+                            title, artist
+                        )
+                    elif acr_result.get("youtube_id"):
+                        logger.info(f"AudioOrchestrator: Récupération YouTube ID {acr_result.get('youtube_id')}")
+                        youtube_result = await self.youtube.get_video_by_id(
+                            acr_result["youtube_id"]
+                        )
+            else:
+                logger.info("AudioOrchestrator: ACRCloud n'a pas trouvé de correspondance")
+        else:
+            logger.warning("AudioOrchestrator: ACRCloud non disponible")
+
+        # Fusion des résultats
+        logger.info("AudioOrchestrator: Fusion des résultats...")
+        result = await self.engine.merge_audio_results(
+            transcript, acr_result, spotify_result
+        )
+        result["transcript"] = transcript
+
+        # Ajout des liens YouTube
+        if youtube_result:
+            result.setdefault("external_links", {})
+            result["external_links"]["youtube"] = youtube_result.get("url")
+            result["external_links"]["youtube_embed"] = youtube_result.get("embed_url")
+            result["youtube"] = youtube_result
+            logger.info("AudioOrchestrator: Liens YouTube ajoutés au résultat")
+
+        logger.info(f"AudioOrchestrator: Traitement terminé - titre={result.get('title')}")
+        return result

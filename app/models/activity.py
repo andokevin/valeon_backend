@@ -9,7 +9,7 @@ class UserActivity(Base):
     user_id       = Column(Integer, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
     activity_type = Column(String(50), nullable=False)
     content_id    = Column(Integer, ForeignKey("contents.content_id"), nullable=True)
-    metadata      = Column(JSON, nullable=True)
+    activity_metadata      = Column(JSON, nullable=True)
     ip_address    = Column(String(50), nullable=True)
     created_at    = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     user    = relationship("User", back_populates="activities")

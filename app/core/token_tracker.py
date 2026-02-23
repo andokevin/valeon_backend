@@ -22,7 +22,7 @@ class TokenTracker:
         activity = UserActivity(
             user_id=user_id,
             activity_type="token_usage",
-            metadata={
+            activity_activity_activity_metadata={
                 "tokens": tokens,
                 "model": model,
                 "timestamp": datetime.utcnow().isoformat()
@@ -45,9 +45,9 @@ class TokenTracker:
         ).all()
         
         total_tokens = sum(
-            activity.metadata.get("tokens", 0)
+            activity.activity_activity_metadata.get("tokens", 0)
             for activity in activities
-            if activity.metadata
+            if activity.activity_metadata
         )
         
         return total_tokens
