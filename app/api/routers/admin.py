@@ -55,3 +55,45 @@ async def list_subs(db: Session = Depends(get_db), admin=Depends(require_admin))
 async def create_sub(data: SubscriptionCreate, db: Session = Depends(get_db), admin=Depends(require_admin)):
     s = Subscription(**data.dict()); db.add(s); db.commit()
     return {"message": "Créé", "id": s.subscription_id}
+
+# app/api/routers/admin.py - Ajoutez cet endpoint
+
+@router.put("/subscription-config/{subscription_name}")
+async def update_subscription_config(
+    subscription_name: str,
+    config: dict,
+    db: Session = Depends(get_db),
+    admin=Depends(require_admin)
+):
+    """
+    Endpoint pour le back-office permettant de modifier
+    la configuration des abonnements en temps réel
+    """
+    # Vérifier que l'abonnement existe
+    sub = db.query(Subscription).filter(Subscription.subscription_name == subscription_name).first()
+    if not sub:
+        raise HTTPException(404, "Abonnement non trouvé")
+    
+    # Mettre à jour la configuration en mémoire
+    from app.core.subscription.manager import SubscriptionManager
+    manager = SubscriptionManager()
+    manager.update_subscription_config(subscription_name, config)
+    
+    # Optionnel: Sauvegarder dans la base de données pour persistance
+    if "allowed_types" in config:
+        # Vous pouvez ajouter une colonne allowed_scan_types à la table subscriptions
+        # sub.allowed_scan_types = ",".join(config["allowed_types"])
+        pass
+    
+    if "daily_limit" in config:
+        sub.max_scans_per_day = config["daily_limit"]
+    
+    if "monthly_limit" in config:
+        sub.max_scans_per_month = config["monthly_limit"]
+    
+    db.commit()
+    
+    return {
+        "message": f"Configuration mise à jour pour {subscription_name}",
+        "config": config
+    }

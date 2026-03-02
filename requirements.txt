@@ -18,3 +18,4 @@ celery
 Pillow
 google-cloud-vision
 aiohttp
+firebase-admin>=6.0.0

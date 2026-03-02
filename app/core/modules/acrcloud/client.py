@@ -136,18 +136,36 @@ class ACRCloudClient:
             logger.info(f"ACRCloudClient: Envoi requête à {url}")
             
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, data=form_data, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                async with session.post(url, data=form_data, timeout=aiohttp.ClientTimeout(total=120)) as resp:
                     logger.info(f"ACRCloudClient: Réponse reçue, status={resp.status}")
                     
                     # Lire le contenu brut d'abord
                     response_text = await resp.text()
-                    logger.debug(f"ACRCloudClient: Réponse brute (premiers 200 caractères): {response_text[:200]}")
+                    
+                    # 🔥 LOG DE LA RÉPONSE BRUTE ACR CLOUD
+                    logger.info("=" * 100)
+                    logger.info("🔍 RÉPONSE ACR CLOUD (brute) - DÉBUT")
+                    logger.info("-" * 50)
+                    logger.info(response_text[:2000])  # Limiter à 2000 caractères
+                    if len(response_text) > 2000:
+                        logger.info(f"... (réponse tronquée, {len(response_text)} caractères au total)")
+                    logger.info("-" * 50)
+                    logger.info("🔍 RÉPONSE ACR CLOUD (brute) - FIN")
+                    logger.info("=" * 100)
                     
                     if resp.status == 200:
                         try:
                             # Essayer de parser en JSON
                             data = json.loads(response_text)
-                            logger.debug("ACRCloudClient: JSON parsé avec succès")
+                            
+                            # 🔥 LOG DE LA RÉPONSE PARSÉE
+                            logger.info("=" * 100)
+                            logger.info("📊 RÉPONSE ACR CLOUD (parsée) - DÉBUT")
+                            logger.info("-" * 50)
+                            logger.info(json.dumps(data, indent=2, ensure_ascii=False)[:2000])
+                            logger.info("-" * 50)
+                            logger.info("📊 RÉPONSE ACR CLOUD (parsée) - FIN")
+                            logger.info("=" * 100)
                             
                             # Vérifier le code de statut dans la réponse
                             status_code = data.get("status", {}).get("code")
@@ -164,12 +182,18 @@ class ACRCloudClient:
                             result = self._parse_response(data)
                             if result:
                                 logger.info(f"ACRCloudClient: SUCCÈS - '{result.get('title')}' par '{result.get('artist')}'")
+                                logger.info(f"   Spotify ID: {result.get('spotify_id')}")
+                                logger.info(f"   YouTube ID: {result.get('youtube_id')}")
+                                logger.info(f"   Confiance: {result.get('confidence')}")
+                                logger.info(f"   ISRC: {result.get('isrc')}")
+                                logger.info(f"   Album: {result.get('album')}")
                             else:
                                 logger.warning("ACRCloudClient: Aucun résultat trouvé dans la réponse")
                             return result
                             
                         except json.JSONDecodeError as e:
                             logger.error(f"ACRCloudClient: Erreur de parsing JSON: {e}")
+                            logger.error(f"   Contenu problématique: {response_text[:500]}")
                             return self._mock_recognize(file_path)
                     else:
                         logger.error(f"ACRCloudClient: Erreur HTTP {resp.status}: {response_text[:500]}")
@@ -224,6 +248,25 @@ class ACRCloudClient:
             # Calculer la confiance (score sur 100)
             score = music.get("score", 0)
             confidence = min(score / 100, 1.0) if score else 0.5
+
+            # 🔥 LOG DÉTAILLÉ DES MÉTADONNÉES EXTRAITES
+            logger.info("=" * 80)
+            logger.info("🎵 MÉTADONNÉES ACR CLOUD EXTRAITES:")
+            logger.info("-" * 40)
+            logger.info(f"   Titre: {music.get('title')}")
+            logger.info(f"   Artiste: {artist_name}")
+            logger.info(f"   Album: {album.get('name')}")
+            logger.info(f"   Label: {music.get('label')}")
+            logger.info(f"   Date sortie: {music.get('release_date')}")
+            logger.info(f"   Durée: {music.get('duration_ms', 0) // 1000}s")
+            logger.info(f"   Score: {score}")
+            logger.info(f"   Confiance: {confidence:.2f}")
+            logger.info(f"   ISRC: {external.get('isrc')}")
+            logger.info(f"   ACR ID: {music.get('acrid')}")
+            logger.info(f"   Spotify ID: {spotify.get('track', {}).get('id')}")
+            logger.info(f"   YouTube ID: {youtube.get('vid')}")
+            logger.info(f"   Genres: {genres}")
+            logger.info("=" * 80)
 
             result = {
                 "title": music.get("title", ""),

@@ -99,11 +99,11 @@ class Settings(BaseSettings):
     # =========================
     # SCAN LIMITS
     # =========================
-    FREE_SCANS_PER_DAY: int = 5
-    FREE_SCANS_PER_MONTH: int = 50
+    FREE_SCANS_PER_DAY: int = 500
+    FREE_SCANS_PER_MONTH: int = 5000
 
-    BASIC_SCANS_PER_DAY: int = 20
-    BASIC_SCANS_PER_MONTH: int = 200
+    BASIC_SCANS_PER_DAY: int = 20000
+    BASIC_SCANS_PER_MONTH: int = 2000
 
     PREMIUM_SCANS_PER_DAY: int = 999
     PREMIUM_SCANS_PER_MONTH: int = 9999
@@ -117,29 +117,59 @@ class Settings(BaseSettings):
         extra="ignore"
     )
 
+   # GEMINI MODELS CONFIGURATION
     # =========================
-    # OLLAMA (Local LLM)
-    # =========================
-    OLLAMA_ENABLED: bool = True
-    OLLAMA_URL: str = "http://localhost:11434"
-    OLLAMA_MODEL: str = "mistral"  # ou llama3, gemma, etc.
-
-    # =========================
-    # GOOGLE VISION
-    # =========================
-    GOOGLE_VISION_ENABLED: bool = True
-    GOOGLE_APPLICATION_CREDENTIALS: Optional[str] = None  # Chemin vers le fichier JSON
+    GEMINI_MODEL: str = "gemini-2.5-flash"  # Modèle principal
+    GEMINI_FALLBACK_MODEL: str = "gemini-2.5-pro"  # Modèle de secours
+    GEMINI_FALLBACK_ENABLED: bool = True  # Activer le fallback
+    GEMINI_QUOTA_THRESHOLD: int = 5 
 
     # =========================
     # WHISPER.CPP
-    # =========================
-    WHISPER_CPP_ENABLED: bool = True
-    WHISPER_EXECUTABLE_PATH: str = "./whisper.cpp/main"  # Chemin vers l'exécutable
-    WHISPER_MODEL_PATH: str = "./whisper.cpp/models/ggml-base.bin"  # Chemin vers le modèle
+    WHISPER_ENABLED: bool = True
+    WHISPER_MODEL_SIZE: str = "base"  # tiny, base, small, medium, large
+    WHISPER_LANGUAGE: str = "fr"
 
     GEMINI_ENABLED: bool = True
     GEMINI_API_KEY: Optional[str] = None
     GEMINI_MODEL: str = "gemini-2.5-flash"
 
-    
+
+    # =========================
+    # CLOUD VISION
+    # =========================
+    CLOUD_VISION_ENABLED: bool = True
+    VISION_FALLBACK_TO_GEMINI: bool = True  # Fallback sur Gemini si Vision échoue
+    VISION_CONFIDENCE_THRESHOLD: float = 0.7
+
+    # Dans app/core/config.py
+
+    # =========================
+    # SCAN PERMISSIONS - CONFIGURABLE POUR BACK-OFFICE
+    # =========================
+    # ⚠️ IMPORTANT: Ces valeurs seront modifiables depuis le back-office
+    # Ne pas modifier directement dans le code après déploiement
+    # 
+    # Types disponibles: "audio", "image", "video"
+    # Format: Liste de strings
+
+    # Configuration pour l'abonnement FREE
+    FREE_ALLOWED_SCAN_TYPES: List[str] = ["audio", "image", "video"]  # ← Actuellement tout autorisé
+    FREE_SCANS_PER_DAY: int = 5222
+    FREE_SCANS_PER_MONTH: int = 20000
+
+    # Configuration pour l'abonnement BASIC
+    BASIC_ALLOWED_SCAN_TYPES: List[str] = ["audio", "image", "video"]
+    BASIC_SCANS_PER_DAY: int = 20
+    BASIC_SCANS_PER_MONTH: int = 200
+
+    # Configuration pour l'abonnement PREMIUM
+    PREMIUM_ALLOWED_SCAN_TYPES: List[str] = ["audio", "image", "video"]
+    PREMIUM_SCANS_PER_DAY: int = 999
+    PREMIUM_SCANS_PER_MONTH: int = 9999
+
+     # Firebase
+    FIREBASE_SERVICE_ACCOUNT_KEY: str = "./serviceAccountKey.json"
+    FIREBASE_ENABLED: bool = True
+
 settings = Settings()

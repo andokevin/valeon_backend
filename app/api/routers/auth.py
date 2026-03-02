@@ -5,6 +5,7 @@ from datetime import timedelta, datetime
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
 import secrets, string
+from app.core.firebase import verify_firebase_token, initialize_firebase
 
 from app.core.database import get_db
 from app.core.config import settings
@@ -13,6 +14,7 @@ from app.api.dependencies.auth import get_current_user, verify_refresh_token
 from app.models import User, Subscription, UserPassword
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+initialize_firebase()
 
 class UserCreate(BaseModel):
     user_full_name: str = Field(..., min_length=2, max_length=100)
@@ -53,6 +55,14 @@ class RefreshTokenRequest(BaseModel):
 class UpdateProfileRequest(BaseModel):
     user_full_name: Optional[str] = Field(None, min_length=2, max_length=100)
     preferences: Optional[dict] = None
+
+# ===== NOUVEAU MODÈLE POUR SOCIAL LOGIN =====
+class SocialLoginRequest(BaseModel):
+    provider: str  # "google" ou "facebook"
+    firebase_token: str
+    user_full_name: Optional[str] = None
+    user_email: Optional[EmailStr] = None
+    user_image: Optional[str] = None
 
 def _token_response(user: User, db: Session, refresh_token: Optional[str] = None) -> dict:
     sub = db.query(Subscription).filter(Subscription.subscription_id == user.user_subscription_id).first()
@@ -143,6 +153,101 @@ async def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depen
     db.commit()
     return _token_response(user, db)
 
+# ===== NOUVEL ENDPOINT POUR SOCIAL LOGIN =====
+@router.post("/social-login", response_model=TokenResponse)
+async def social_login(data: SocialLoginRequest, db: Session = Depends(get_db)):
+    """
+    Authentification via Google ou Facebook.
+    Le token Firebase est vérifié et on crée/récupère l'utilisateur.
+    """
+    # Vérifier que le provider est supporté
+    if data.provider not in ["google", "facebook"]:
+        raise HTTPException(400, "Provider non supporté")
+    
+    # Vérifier le token Firebase
+    try:
+        decoded_token = verify_firebase_token(data.firebase_token)
+        firebase_uid = decoded_token.get('uid')
+        firebase_email = decoded_token.get('email')
+        firebase_name = decoded_token.get('name')
+        firebase_picture = decoded_token.get('picture')
+        
+        print(f"✅ Token Firebase valide pour UID: {firebase_uid}")
+        
+        # Utiliser les données du token si non fournies
+        user_email = data.user_email or firebase_email
+        user_name = data.user_full_name or firebase_name or "Utilisateur"
+        user_image = data.user_image or firebase_picture
+        
+    except HTTPException as e:
+        # En développement, on peut continuer sans vérification
+        if settings.ENVIRONMENT == "development":
+            print(f"⚠️ Mode développement - Token non vérifié: {data.firebase_token[:20]}...")
+            user_email = data.user_email or f"{data.provider}_user@example.com"
+            user_name = data.user_full_name or f"{data.provider.capitalize()} User"
+            user_image = data.user_image
+        else:
+            raise e
+    
+    # Vérifier si l'utilisateur existe déjà
+    user = None
+    if user_email:
+        user = db.query(User).filter(User.user_email == user_email).first()
+    
+    # Récupérer l'abonnement Free
+    free_sub = db.query(Subscription).filter(Subscription.subscription_name == "Free").first()
+    if not free_sub:
+        free_sub = Subscription(
+            subscription_name="Free",
+            subscription_price=0.0,
+            subscription_duration=None,
+            max_scans_per_day=5,
+            max_scans_per_month=50,
+            is_premium=False,
+            created_at=datetime.utcnow()
+        )
+        db.add(free_sub)
+        db.flush()
+    
+    if not user:
+        # Créer un nouvel utilisateur
+        user = User(
+            user_full_name=user_name,
+            user_email=user_email or f"{data.provider}_{secrets.token_hex(8)}@temp.valeon.com",
+            user_image=user_image,
+            user_subscription_id=free_sub.subscription_id,
+            is_active=True,
+            preferences={
+                "language": "fr", 
+                "notifications": True, 
+                "auth_provider": data.provider,
+                "firebase_uid": firebase_uid if 'firebase_uid' in locals() else None
+            },
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+        db.add(user)
+        db.flush()
+        
+        # Pas de mot de passe pour les comptes sociaux
+        # Créer un mot de passe aléatoire
+        random_password = secrets.token_urlsafe(16)
+        db.add(UserPassword(
+            user_id=user.user_id,
+            password_hash=get_password_hash(random_password)
+        ))
+    else:
+        # Mettre à jour les informations si nécessaire
+        if user_name and not user.user_full_name:
+            user.user_full_name = user_name
+        if user_image:
+            user.user_image = user_image
+        user.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(user)
+    
+    return _token_response(user, db)
 @router.get("/me", response_model=UserResponse)
 async def me(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     sub = db.query(Subscription).filter(Subscription.subscription_id == current_user.user_subscription_id).first()

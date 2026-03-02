@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 import openai
 
+
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
 if project_root not in sys.path:
@@ -17,7 +18,10 @@ from app.core.database import engine, Base
 from app.core.cache import cache
 from app.core.rate_limiter import rate_limiter
 from app.core.websocket.manager import manager
-from app.api.routers import auth, scans, library, recommendations, streaming, websocket, admin
+from app.api.routers import auth, scans, library, recommendations, streaming, websocket, admin, users
+from app.api.routers import chat, search, playlist 
+# ===== NOUVEL IMPORT POUR FIREBASE =====
+from app.core.firebase import initialize_firebase
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -34,11 +38,26 @@ async def periodic_cleanup():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(f"🚀 Démarrage Valeon API ({settings.ENVIRONMENT})")
+    
+    # ===== INITIALISATION FIREBASE =====
+    try:
+        initialize_firebase()
+        logger.info("✅ Firebase Admin SDK initialisé")
+    except Exception as e:
+        logger.warning(f"⚠️ Erreur initialisation Firebase: {e}")
+        logger.warning("   Le service continuera sans validation Firebase")
+    
+    # Création des dossiers d'upload
     for path in [settings.UPLOAD_PATH, f"{settings.UPLOAD_PATH}/audio",
                  f"{settings.UPLOAD_PATH}/images", f"{settings.UPLOAD_PATH}/videos"]:
         os.makedirs(path, exist_ok=True)
+        logger.debug(f"📁 Dossier créé/vérifié: {path}")
+    
+    # Lancement de la tâche de nettoyage périodique
     asyncio.create_task(periodic_cleanup())
+    
     yield
+    
     logger.info("👋 Arrêt Valeon API")
 
 app = FastAPI(
@@ -95,6 +114,10 @@ app.include_router(streaming.router,       prefix="/api")
 app.include_router(recommendations.router, prefix="/api")
 app.include_router(websocket.router)
 app.include_router(admin.router,           prefix="/api")
+app.include_router(users.router,           prefix="/api")
+app.include_router(chat.router,           prefix="/api")       
+app.include_router(search.router, prefix="/api")      
+app.include_router(playlist.router, prefix="/api")
 
 app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_PATH), name="uploads")
 
@@ -114,6 +137,11 @@ async def health():
         services["database"] = "error"
     services["redis"] = "ok" if (cache.enabled and cache.redis_client and cache.redis_client.ping()) else "disabled"
     services["ws_connections"] = manager.get_connection_count()
+    
+    # Vérifier Firebase
+    from app.core.firebase import _firebase_app
+    services["firebase"] = "ok" if _firebase_app is not None else "disabled"
+    
     ok = services["database"] == "ok"
     return {"status": "healthy" if ok else "degraded", "services": services, "version": settings.APP_VERSION}
 

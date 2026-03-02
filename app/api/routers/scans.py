@@ -7,7 +7,7 @@ import aiofiles
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.rate_limiter import rate_limiter
-from app.models import Scan, User
+from app.models import Scan, User, Content  
 from app.api.dependencies.auth import get_current_user
 from app.core.orchestrator.main_orchestrator import MainOrchestrator
 from app.core.websocket.manager import manager
@@ -36,11 +36,58 @@ async def _process(scan_id: int, file_path: str, media_type: str, user_id: int, 
     try:
         user = db.query(User).filter(User.user_id == user_id).first()
         result = await orchestrator.process_scan(file_path, media_type, user, db)
+        
+        # ===== AJOUT: CRÉER OU RÉCUPÉRER LE CONTENU =====
+        content_id = None
+        if result and result.get("title"):
+            # Chercher si le contenu existe déjà par spotify_id ou titre+artiste
+            existing_content = None
+            spotify_id = result.get("spotify_id") or (result.get("spotify", {}).get("spotify_id") if result.get("spotify") else None)
+            youtube_id = result.get("youtube_id") or (result.get("youtube", {}).get("video_id") if result.get("youtube") else None)
+            
+            if spotify_id:
+                existing_content = db.query(Content).filter(Content.spotify_id == spotify_id).first()
+            elif result.get("title") and result.get("artist"):
+                existing_content = db.query(Content).filter(
+                    Content.content_title == result.get("title"),
+                    Content.content_artist == result.get("artist")
+                ).first()
+            
+            if existing_content:
+                content_id = existing_content.content_id
+                result["content_id"] = content_id
+                logger.info(f"✅ Contenu existant trouvé avec ID: {content_id}")
+            else:
+                # Créer un nouveau contenu
+                try:
+                    new_content = Content(
+                        content_type=result.get("type", "music"),
+                        content_title=result.get("title", "Inconnu"),
+                        content_artist=result.get("artist"),
+                        content_image=result.get("image"),
+                        content_description=result.get("description"),
+                        content_release_date=result.get("year"),
+                        spotify_id=spotify_id,
+                        youtube_id=youtube_id,
+                    )
+                    db.add(new_content)
+                    db.flush()  # Pour obtenir l'ID sans commit final
+                    content_id = new_content.content_id
+                    result["content_id"] = content_id
+                    logger.info(f"✅ Nouveau contenu créé avec ID: {content_id}")
+                except Exception as e:
+                    logger.error(f"❌ Erreur création contenu: {e}")
+        
         scan = db.query(Scan).filter(Scan.scan_id == scan_id).first()
-        scan.status = "completed"; scan.result = result
+        scan.status = "completed"
+        scan.result = result
+        scan.recognized_content_id = content_id  # Lier le scan au contenu
         scan.processing_time = (datetime.utcnow() - scan.scan_date).total_seconds()
         db.commit()
+        
+        logger.info(f"📤 Scan {scan_id} terminé avec content_id: {content_id}")
         await manager.send_personal_message({"type": "scan_completed", "scan_id": scan_id, "result": result}, user_id)
+        
     except Exception as e:
         logger.error(f"Scan {scan_id} failed: {e}", exc_info=True)
         scan = db.query(Scan).filter(Scan.scan_id == scan_id).first()
