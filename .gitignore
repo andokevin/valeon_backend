@@ -13,3 +13,4 @@ venv/
 # Fichiers uploadés et sauvegardes
 uploads/
 *.bak
+.env.backup*

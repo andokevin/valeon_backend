@@ -52,9 +52,9 @@ class GeminiClient:
         except Exception as e:
             error_str = str(e).lower()
             
-            # Détection des erreurs de quota
-            if "429" in error_str or "quota" in error_str or "resource exhausted" in error_str:
-                logger.warning(f"GeminiClient: Quota épuisé pour {model}: {e}")
+            # Quota épuisé (429) ou modèle surchargé / indisponible (503) : on bascule sur le fallback
+            if any(s in error_str for s in ("429", "quota", "resource exhausted", "503", "unavailable", "overloaded", "high demand")):
+                logger.warning(f"GeminiClient: {model} indisponible (quota ou surcharge): {e}")
                 return type('QuotaError', (), {'error': 'quota_exceeded', 'status_code': 429})()
             
             # Autres erreurs

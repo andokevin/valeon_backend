@@ -107,8 +107,8 @@ class Settings(BaseSettings):
 
    # GEMINI MODELS CONFIGURATION
     # =========================
-    GEMINI_MODEL: str = "gemini-2.5-flash"  # Modèle principal
-    GEMINI_FALLBACK_MODEL: str = "gemini-2.5-pro"  # Modèle de secours
+    GEMINI_MODEL: str = "gemini-3.8-flash"  # Modèle principal (gemini-2.5-* n'est plus disponible)
+    GEMINI_FALLBACK_MODEL: str = "gemini-3.7-flash"  # Modèle de secours
     GEMINI_FALLBACK_ENABLED: bool = True  # Activer le fallback
     GEMINI_QUOTA_THRESHOLD: int = 5 
 
