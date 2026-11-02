@@ -97,18 +97,6 @@ class Settings(BaseSettings):
     ]
 
     # =========================
-    # SCAN LIMITS
-    # =========================
-    FREE_SCANS_PER_DAY: int = 500
-    FREE_SCANS_PER_MONTH: int = 5000
-
-    BASIC_SCANS_PER_DAY: int = 20000
-    BASIC_SCANS_PER_MONTH: int = 2000
-
-    PREMIUM_SCANS_PER_DAY: int = 999
-    PREMIUM_SCANS_PER_MONTH: int = 9999
-
-    # =========================
     # Pydantic v2 Config
     # =========================
     model_config = SettingsConfigDict(
@@ -132,7 +120,6 @@ class Settings(BaseSettings):
 
     GEMINI_ENABLED: bool = True
     GEMINI_API_KEY: Optional[str] = None
-    GEMINI_MODEL: str = "gemini-2.5-flash"
 
 
     # =========================

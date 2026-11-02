@@ -165,6 +165,7 @@ async def get_conversation_history(
     # Pour l'instant, retourner un historique vide
     return {"conversation_id": conversation_id, "messages": []}
 
+@router.post("/clear/{conversation_id}")
 @router.delete("/history/{conversation_id}")
 async def delete_conversation(
     conversation_id: str,

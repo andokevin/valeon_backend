@@ -4,17 +4,42 @@ from sqlalchemy.orm import Session
 from datetime import timedelta, datetime
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
-import secrets, string
+import secrets, string, hashlib, logging
 from app.core.firebase import verify_firebase_token, initialize_firebase
 
 from app.core.database import get_db
 from app.core.config import settings
-from app.core.security import verify_password, get_password_hash, create_access_token, create_refresh_token
+from app.core.security import (verify_password, get_password_hash, needs_rehash, create_access_token,
+                               create_refresh_token, merge_user_preferences)
 from app.api.dependencies.auth import get_current_user, verify_refresh_token
 from app.models import User, Subscription, UserPassword
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+logger = logging.getLogger(__name__)
 initialize_firebase()
+
+PASSWORD_RESET_TTL_MINUTES = 60
+
+def _check_password_strength(password: str):
+    if not any(c.isupper() for c in password) or not any(c.isdigit() for c in password):
+        raise HTTPException(400, "Mot de passe trop faible (majuscule + chiffre requis)")
+
+def _get_or_create_free_subscription(db: Session) -> Subscription:
+    free_sub = db.query(Subscription).filter(Subscription.subscription_name == "Free").first()
+    if not free_sub:
+        logger.warning("Abonnement 'Free' non trouvé - Création automatique...")
+        free_sub = Subscription(
+            subscription_name="Free",
+            subscription_price=0.0,
+            subscription_duration=0,  # 0 = illimité (colonne NOT NULL)
+            max_scans_per_day=5,
+            max_scans_per_month=50,
+            is_premium=False,
+            created_at=datetime.utcnow()
+        )
+        db.add(free_sub)
+        db.flush()
+    return free_sub
 
 class UserCreate(BaseModel):
     user_full_name: str = Field(..., min_length=2, max_length=100)
@@ -61,8 +86,16 @@ class SocialLoginRequest(BaseModel):
     provider: str  # "google" ou "facebook"
     firebase_token: str
     user_full_name: Optional[str] = None
-    user_email: Optional[EmailStr] = None
+    # Ignoré pour l'identification : seul l'email vérifié par Firebase fait foi
+    user_email: Optional[str] = None
     user_image: Optional[str] = None
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    new_password: str = Field(..., min_length=8)
 
 def _token_response(user: User, db: Session, refresh_token: Optional[str] = None) -> dict:
     sub = db.query(Subscription).filter(Subscription.subscription_id == user.user_subscription_id).first()
@@ -86,29 +119,11 @@ async def register(data: UserCreate, db: Session = Depends(get_db)):
     
     if db.query(User).filter(User.user_email == data.user_email).first():
         raise HTTPException(400, "Email déjà utilisé")
-    
-    if not any(c.isupper() for c in data.password) or not any(c.isdigit() for c in data.password):
-        raise HTTPException(400, "Mot de passe trop faible (majuscule + chiffre requis)")
-    
-    # RECHERCHER L'ABONNEMENT FREE
-    free_sub = db.query(Subscription).filter(Subscription.subscription_name == "Free").first()
-    
-    # SI L'ABONNEMENT FREE N'EXISTE PAS, LE CRÉER AUTOMATIQUEMENT
-    if not free_sub:
-        print("⚠️  Abonnement 'Free' non trouvé - Création automatique...")
-        free_sub = Subscription(
-            subscription_name="Free",
-            subscription_price=0.0,
-            subscription_duration=None,  # Illimité
-            max_scans_per_day=5,
-            max_scans_per_month=50,
-            is_premium=False,
-            created_at=datetime.utcnow()
-        )
-        db.add(free_sub)
-        db.flush()  # Pour obtenir l'ID sans commit final
-        print(f"✅ Abonnement 'Free' créé avec l'ID: {free_sub.subscription_id}")
-    
+
+    _check_password_strength(data.password)
+
+    free_sub = _get_or_create_free_subscription(db)
+
     # CRÉATION DE L'UTILISATEUR
     user = User(
         user_full_name=data.user_full_name, 
@@ -140,15 +155,19 @@ async def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depen
     if not user.is_active:
         raise HTTPException(403, "Compte désactivé")
     up = db.query(UserPassword).filter(UserPassword.user_id == user.user_id).first()
+    # Vérifier le verrouillage AVANT le mot de passe (sinon le brute-force continue)
+    if up and up.locked_until and up.locked_until > datetime.utcnow():
+        raise HTTPException(403, f"Compte verrouillé jusqu'à {up.locked_until}")
     if not up or not verify_password(form.password, up.password_hash):
         if up:
-            up.login_attempts += 1
+            up.login_attempts = (up.login_attempts or 0) + 1
             if up.login_attempts >= 5:
                 up.locked_until = datetime.utcnow() + timedelta(minutes=30)
             db.commit()
         raise HTTPException(401, "Email ou mot de passe incorrect", headers={"WWW-Authenticate": "Bearer"})
-    if up.locked_until and up.locked_until > datetime.utcnow():
-        raise HTTPException(403, f"Compte verrouillé jusqu'à {up.locked_until}")
+    if needs_rehash(up.password_hash):
+        # Migration transparente des anciens hash SHA-256 non salés vers bcrypt
+        up.password_hash = get_password_hash(form.password)
     up.login_attempts = 0; up.locked_until = None; up.last_login = datetime.utcnow()
     db.commit()
     return _token_response(user, db)
@@ -164,64 +183,38 @@ async def social_login(data: SocialLoginRequest, db: Session = Depends(get_db)):
     if data.provider not in ["google", "facebook"]:
         raise HTTPException(400, "Provider non supporté")
     
-    # Vérifier le token Firebase
-    try:
-        decoded_token = verify_firebase_token(data.firebase_token)
-        firebase_uid = decoded_token.get('uid')
-        firebase_email = decoded_token.get('email')
-        firebase_name = decoded_token.get('name')
-        firebase_picture = decoded_token.get('picture')
-        
-        print(f"✅ Token Firebase valide pour UID: {firebase_uid}")
-        
-        # Utiliser les données du token si non fournies
-        user_email = data.user_email or firebase_email
-        user_name = data.user_full_name or firebase_name or "Utilisateur"
-        user_image = data.user_image or firebase_picture
-        
-    except HTTPException as e:
-        # En développement, on peut continuer sans vérification
-        if settings.ENVIRONMENT == "development":
-            print(f"⚠️ Mode développement - Token non vérifié: {data.firebase_token[:20]}...")
-            user_email = data.user_email or f"{data.provider}_user@example.com"
-            user_name = data.user_full_name or f"{data.provider.capitalize()} User"
-            user_image = data.user_image
-        else:
-            raise e
-    
-    # Vérifier si l'utilisateur existe déjà
-    user = None
-    if user_email:
-        user = db.query(User).filter(User.user_email == user_email).first()
-    
-    # Récupérer l'abonnement Free
-    free_sub = db.query(Subscription).filter(Subscription.subscription_name == "Free").first()
-    if not free_sub:
-        free_sub = Subscription(
-            subscription_name="Free",
-            subscription_price=0.0,
-            subscription_duration=None,
-            max_scans_per_day=5,
-            max_scans_per_month=50,
-            is_premium=False,
-            created_at=datetime.utcnow()
-        )
-        db.add(free_sub)
-        db.flush()
-    
+    # Vérifier le token Firebase : aucune identité n'est acceptée sans token valide
+    decoded_token = verify_firebase_token(data.firebase_token)
+    firebase_uid = decoded_token.get('uid')
+    if not firebase_uid:
+        raise HTTPException(401, "Token Firebase invalide")
+
+    # L'identité vient uniquement du token signé (jamais du corps de la requête),
+    # sinon n'importe qui pourrait se connecter sur le compte d'un autre email.
+    firebase_email = decoded_token.get('email')
+    user_email = firebase_email or f"{data.provider}_{firebase_uid}@users.valeon.app"
+    user_name = data.user_full_name or decoded_token.get('name') or "Utilisateur"
+    user_image = data.user_image or decoded_token.get('picture')
+
+    user = db.query(User).filter(User.user_email == user_email).first()
+    if user and not user.is_active:
+        raise HTTPException(403, "Compte désactivé")
+
+    free_sub = _get_or_create_free_subscription(db)
+
     if not user:
         # Créer un nouvel utilisateur
         user = User(
             user_full_name=user_name,
-            user_email=user_email or f"{data.provider}_{secrets.token_hex(8)}@temp.valeon.com",
+            user_email=user_email,
             user_image=user_image,
             user_subscription_id=free_sub.subscription_id,
             is_active=True,
             preferences={
-                "language": "fr", 
-                "notifications": True, 
+                "language": "fr",
+                "notifications": True,
                 "auth_provider": data.provider,
-                "firebase_uid": firebase_uid if 'firebase_uid' in locals() else None
+                "firebase_uid": firebase_uid,
             },
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow()
@@ -258,7 +251,7 @@ async def update_me(data: UpdateProfileRequest, current_user: User = Depends(get
     if data.user_full_name:
         current_user.user_full_name = data.user_full_name
     if data.preferences:
-        current_user.preferences = {**(current_user.preferences or {}), **data.preferences}
+        current_user.preferences = merge_user_preferences(current_user.preferences, data.preferences)
     db.commit(); db.refresh(current_user)
     sub = db.query(Subscription).filter(Subscription.subscription_id == current_user.user_subscription_id).first()
     return {**current_user.__dict__, "subscription": sub.subscription_name if sub else "Free", "is_premium": sub.is_premium if sub else False}
@@ -281,12 +274,49 @@ async def logout(current_user: User = Depends(get_current_user)):
 async def change_password(data: PasswordChange, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if data.new_password != data.confirm_password:
         raise HTTPException(400, "Les mots de passe ne correspondent pas")
+    _check_password_strength(data.new_password)
     up = db.query(UserPassword).filter(UserPassword.user_id == current_user.user_id).first()
     if not up or not verify_password(data.current_password, up.password_hash):
         raise HTTPException(400, "Mot de passe actuel incorrect")
     up.password_hash = get_password_hash(data.new_password)
     db.commit()
     return {"message": "Mot de passe changé"}
+
+def _hash_reset_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+@router.post("/reset-password")
+async def request_password_reset(data: PasswordResetRequest, db: Session = Depends(get_db)):
+    """
+    Demande de réinitialisation. Répond toujours la même chose pour ne pas
+    révéler quels emails ont un compte. Seul le hash du token est stocké.
+    """
+    user = db.query(User).filter(User.user_email == data.email).first()
+    if user and user.is_active:
+        up = db.query(UserPassword).filter(UserPassword.user_id == user.user_id).first()
+        if up:
+            token = secrets.token_urlsafe(32)
+            up.password_reset_token = _hash_reset_token(token)
+            up.password_reset_expires = datetime.utcnow() + timedelta(minutes=PASSWORD_RESET_TTL_MINUTES)
+            db.commit()
+            # TODO: envoyer le token par email (aucun service SMTP n'est configuré)
+            if settings.DEBUG:
+                logger.info(f"🔑 Token de réinitialisation pour {data.email}: {token}")
+    return {"message": "Si un compte existe pour cet email, un lien de réinitialisation a été envoyé"}
+
+@router.post("/reset-password/confirm")
+async def confirm_password_reset(data: PasswordResetConfirm, db: Session = Depends(get_db)):
+    _check_password_strength(data.new_password)
+    up = db.query(UserPassword).filter(UserPassword.password_reset_token == _hash_reset_token(data.token)).first()
+    if not up or not up.password_reset_expires or up.password_reset_expires < datetime.utcnow():
+        raise HTTPException(400, "Lien de réinitialisation invalide ou expiré")
+    up.password_hash = get_password_hash(data.new_password)
+    up.password_reset_token = None
+    up.password_reset_expires = None
+    up.login_attempts = 0
+    up.locked_until = None
+    db.commit()
+    return {"message": "Mot de passe réinitialisé"}
 
 
 # ===== ENDPOINTS POUR LA SYNCHRONISATION =====
@@ -310,13 +340,9 @@ async def sync_user(
         if "user_image" in data and data["user_image"]:
             current_user.user_image = data["user_image"]
         
-        # Mettre à jour les préférences si fournies
+        # Mettre à jour les préférences si fournies (clés protégées conservées)
         if "preferences" in data and data["preferences"]:
-            # Fusionner avec les préférences existantes
-            current_user.preferences = {
-                **(current_user.preferences or {}),
-                **data["preferences"]
-            }
+            current_user.preferences = merge_user_preferences(current_user.preferences, data["preferences"])
         
         # Mettre à jour la date de modification
         current_user.updated_at = datetime.utcnow()
@@ -368,12 +394,15 @@ async def sync_all_user_data(
         
         for field in allowed_fields:
             if field in data:
-                setattr(current_user, field, data[field])
-                update_fields[field] = data[field]
-        
+                value = data[field]
+                if field == "preferences":
+                    value = merge_user_preferences(current_user.preferences, value, replace=True)
+                setattr(current_user, field, value)
+                update_fields[field] = value
+
         current_user.updated_at = datetime.utcnow()
         db.commit()
-        
+
         return {
             "message": "Données synchronisées",
             "updated_fields": update_fields,

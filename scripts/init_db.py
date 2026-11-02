@@ -191,7 +191,7 @@ def seed_initial_data():
             free_sub = Subscription(
                 subscription_name="Free",
                 subscription_price=0.0,
-                subscription_duration=None,  # Illimité
+                subscription_duration=0,  # 0 = illimité (colonne NOT NULL)
                 max_scans_per_day=5,
                 max_scans_per_month=50,
                 is_premium=False

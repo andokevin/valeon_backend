@@ -83,8 +83,8 @@ class SubscriptionManager:
     async def track_scan(self, user: User, media_type: str, db: Session):
         db.add(UserActivity(
             user_id=user.user_id, 
-            activity_type="scan", 
-            metadata={"media_type": media_type}
+            activity_type="scan",
+            activity_metadata={"media_type": media_type}
         ))
         db.commit()
         logger.info(f"Scan {media_type} tracké pour user {user.user_id}")
@@ -92,8 +92,8 @@ class SubscriptionManager:
     async def track_token_usage(self, user_id: int, tokens: int, model: str, db: Session):
         db.add(UserActivity(
             user_id=user_id, 
-            activity_type="token_usage", 
-            metadata={"tokens": tokens, "model": model}
+            activity_type="token_usage",
+            activity_metadata={"tokens": tokens, "model": model}
         ))
         db.commit()
 

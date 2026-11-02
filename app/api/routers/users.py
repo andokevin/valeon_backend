@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 
 from app.core.database import get_db
+from app.core.security import merge_user_preferences
 from app.api.dependencies.auth import get_current_user
 from app.models import User
 
@@ -27,10 +28,7 @@ async def sync_user(
             current_user.user_image = data["user_image"]
         
         if "preferences" in data and data["preferences"]:
-            current_user.preferences = {
-                **(current_user.preferences or {}),
-                **data["preferences"]
-            }
+            current_user.preferences = merge_user_preferences(current_user.preferences, data["preferences"])
         
         current_user.updated_at = datetime.utcnow()
         db.commit()
@@ -64,8 +62,11 @@ async def sync_all_user_data(
         
         for field in allowed_fields:
             if field in data:
-                setattr(current_user, field, data[field])
-                update_fields[field] = data[field]
+                value = data[field]
+                if field == "preferences":
+                    value = merge_user_preferences(current_user.preferences, value, replace=True)
+                setattr(current_user, field, value)
+                update_fields[field] = value
         
         current_user.updated_at = datetime.utcnow()
         db.commit()

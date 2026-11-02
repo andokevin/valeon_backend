@@ -119,6 +119,8 @@ app.include_router(chat.router,           prefix="/api")
 app.include_router(search.router, prefix="/api")      
 app.include_router(playlist.router, prefix="/api")
 
+# StaticFiles vérifie le dossier dès l'import, avant le lifespan
+os.makedirs(settings.UPLOAD_PATH, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_PATH), name="uploads")
 
 @app.get("/")

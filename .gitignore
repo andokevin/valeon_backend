@@ -1,0 +1,15 @@
+# Secrets : ne jamais commiter (voir .env.example)
+.env
+serviceAccountKey.json
+app/serviceAccountKey.json
+credentials/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Fichiers uploadés et sauvegardes
+uploads/
+*.bak

@@ -27,6 +27,8 @@ class SearchResponse(BaseModel):
     results: List[SearchResult]
     total: int
 
+# "" en plus de "/" : l'app appelle /api/search, sans slash final (évite une redirection 307)
+@router.get("", response_model=SearchResponse, include_in_schema=False)
 @router.get("/", response_model=SearchResponse)
 async def search(
     q: str = Query(..., min_length=1, max_length=100),
@@ -70,7 +72,7 @@ async def search(
             image=content.content_image,
             description=content.content_description,
             source="local",
-            external_id=content.spotify_id or str(content.tmdb_id) if content.tmdb_id else None
+            external_id=content.spotify_id or (str(content.tmdb_id) if content.tmdb_id else None)
         ))
 
     return SearchResponse(

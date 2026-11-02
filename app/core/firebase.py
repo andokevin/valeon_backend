@@ -19,7 +19,17 @@ def initialize_firebase():
         # Chemin vers le fichier de clé de service
         # À définir dans votre .env ou directement ici
         cred_path = getattr(settings, 'FIREBASE_SERVICE_ACCOUNT_KEY', 'serviceAccountKey.json')
-        
+        if not settings.FIREBASE_ENABLED:
+            print("⚠️ Firebase désactivé (FIREBASE_ENABLED=false)")
+            return None
+        # Chemin relatif : chercher aussi depuis la racine du backend et dans app/
+        if not os.path.isabs(cred_path) and not os.path.exists(cred_path):
+            backend_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            for candidate in (os.path.join(backend_root, cred_path), os.path.join(backend_root, "app", cred_path)):
+                if os.path.exists(candidate):
+                    cred_path = candidate
+                    break
+
         # Vérifier si le fichier existe
         if not os.path.exists(cred_path):
             print(f"⚠️ Fichier de clé Firebase non trouvé: {cred_path}")
@@ -47,14 +57,15 @@ def verify_firebase_token(id_token: str):
             initialize_firebase()
             
         if _firebase_app is None:
-            # Mode développement sans Firebase
-            print("⚠️ Firebase non initialisé - Token non vérifié")
-            return {"uid": "dev_user", "email": "dev@example.com"}
-        
+            # Ne jamais accepter un token non vérifié (sinon usurpation de compte)
+            raise HTTPException(status_code=503, detail="Connexion sociale indisponible (Firebase non configuré)")
+
         # Vérifier le token
         decoded_token = auth.verify_id_token(id_token)
         return decoded_token
-        
+
+    except HTTPException:
+        raise
     except auth.ExpiredIdTokenError:
         raise HTTPException(status_code=401, detail="Token Firebase expiré")
     except auth.InvalidIdTokenError:

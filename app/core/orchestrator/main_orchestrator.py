@@ -19,11 +19,9 @@ class MainOrchestrator:
     async def process_scan(self, file_path: str, media_type: str, user: User, db) -> Dict[str, Any]:
         """
         Traite un scan en fonction de son type (audio, image, video).
-        Vérifie d'abord les permissions d'abonnement, puis dirige vers l'orchestrateur approprié.
+        Les permissions d'abonnement sont vérifiées par la route avant l'upload
+        (check_scan_permission), pour répondre 403/429 immédiatement.
         """
-        # Vérifier les permissions d'abonnement
-        await self.sub_mgr.check_scan_permission(user, media_type, db)
-        
         # Traitement selon le type de média
         if media_type == "audio":
             logger.info(f"MainOrchestrator: Scan audio pour user {user.user_id}")

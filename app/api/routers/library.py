@@ -51,7 +51,7 @@ async def add_favorite(content_id: int, notes: Optional[str] = None,
     if db.query(Favorite).filter(Favorite.user_id == current_user.user_id, Favorite.content_id == content_id).first():
         raise HTTPException(400, "Déjà en favori")
     db.add(Favorite(user_id=current_user.user_id, content_id=content_id, notes=notes))
-    db.add(UserActivity(user_id=current_user.user_id, activity_type="favorite", content_id=content_id, metadata={"action": "add"}))
+    db.add(UserActivity(user_id=current_user.user_id, activity_type="favorite", content_id=content_id, activity_metadata={"action": "add"}))
     db.commit()
     return {"message": "Ajouté aux favoris"}
 
@@ -61,7 +61,7 @@ async def remove_favorite(content_id: int, db: Session = Depends(get_db), curren
     if not fav:
         raise HTTPException(404, "Favori non trouvé")
     db.delete(fav)
-    db.add(UserActivity(user_id=current_user.user_id, activity_type="favorite", content_id=content_id, metadata={"action": "remove"}))
+    db.add(UserActivity(user_id=current_user.user_id, activity_type="favorite", content_id=content_id, activity_metadata={"action": "remove"}))
     db.commit()
     return {"message": "Retiré des favoris"}
 

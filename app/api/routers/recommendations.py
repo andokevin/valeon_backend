@@ -228,10 +228,12 @@ async def get_similar_content(
     # ===== STRATÉGIE 3: FALLBACK SUR LA BASE LOCALE =====
     if not similar:
         logger.info("Fallback sur la base locale pour les contenus similaires")
+        # MySQL n'a pas RANDOM(), seulement RAND()
+        random_fn = func.rand() if db.bind.dialect.name == "mysql" else func.random()
         local_similar = db.query(Content).filter(
             Content.content_type == source_content.content_type,
             Content.content_id != source_content.content_id
-        ).order_by(func.random()).limit(limit).all()
+        ).order_by(random_fn).limit(limit).all()
 
         for c in local_similar:
             similar.append({
@@ -318,11 +320,13 @@ async def get_personalized_recommendations(
                     "date": scan.scan_date.isoformat()
                 })
 
-    # Si pas d'historique, utiliser les tendances
+    # Si pas d'historique, utiliser les tendances (même format de réponse)
     if not user_history:
-        trending = await get_trending_content(db, limit=limit, content_type=content_type)
-        cache.set(cache_key, trending, ttl=1800)  # 30 minutes
-        return trending
+        # Appel direct : il faut passer time_range, sinon c'est l'objet Query() par défaut
+        trending = await get_trending_content(db, content_type=content_type, time_range="week", limit=limit)
+        response = {"recommendations": trending, "source": "trending"}
+        cache.set(cache_key, response, ttl=1800)  # 30 minutes
+        return response
 
     # Générer des recommandations avec Gemini
     system_prompt = (
@@ -364,7 +368,7 @@ Réponds en JSON avec une liste 'recommendations'."""
             if details:
                 enriched["image"] = details.get("image")
                 enriched["description"] = details.get("description")
-                enriched["year"] = details.get("release_date", "")[:4]
+                enriched["year"] = (details.get("release_date") or "")[:4]
                 enriched["tmdb_id"] = details.get("tmdb_id")
                 
                 # Trailer YouTube

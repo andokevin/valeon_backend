@@ -38,7 +38,7 @@ async def get_current_user_optional(
 
 async def get_user_from_token(token: str) -> Optional[int]:
     payload = decode_token(token)
-    if not payload:
+    if not payload or payload.get("type") != "access":
         return None
     sub = payload.get("sub")
     return int(sub) if sub else None

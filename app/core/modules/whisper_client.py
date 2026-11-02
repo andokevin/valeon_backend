@@ -1,5 +1,4 @@
 # app/core/modules/whisper_client.py
-import whisper
 import os
 import tempfile
 import logging
@@ -33,6 +32,9 @@ class WhisperClient:
     def _load_model(self):
         """Charge le modèle Whisper (téléchargement auto si nécessaire)."""
         try:
+            # Import paresseux : openai-whisper (et torch) est optionnel,
+            # l'API doit démarrer même s'il n'est pas installé.
+            import whisper
             logger.info(f"WhisperClient: Chargement du modèle '{self.model_size}'...")
             self.model = whisper.load_model(self.model_size)
             logger.info(f"WhisperClient: Modèle '{self.model_size}' chargé avec succès")
