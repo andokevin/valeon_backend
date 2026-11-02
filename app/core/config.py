@@ -1,3 +1,4 @@
+import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List, Optional
 
@@ -99,8 +100,9 @@ class Settings(BaseSettings):
     # =========================
     # Pydantic v2 Config
     # =========================
+    # ENV_FILE permet de lire la config depuis un secret monté (Cloud Run : /secrets/.env)
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=os.getenv("ENV_FILE", ".env"),
         case_sensitive=True,
         extra="ignore"
     )
@@ -158,5 +160,11 @@ class Settings(BaseSettings):
      # Firebase
     FIREBASE_SERVICE_ACCOUNT_KEY: str = "./serviceAccountKey.json"
     FIREBASE_ENABLED: bool = True
+    # Sans fichier de clé : utiliser l'identité du serveur (Cloud Run, Compute Engine)
+    FIREBASE_USE_ADC: bool = False
+    FIREBASE_PROJECT_ID: Optional[str] = None
+
+    # Crée les tables manquantes et les abonnements de base au démarrage
+    AUTO_CREATE_TABLES: bool = False
 
 settings = Settings()

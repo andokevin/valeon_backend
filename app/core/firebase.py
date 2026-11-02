@@ -30,15 +30,18 @@ def initialize_firebase():
                     cred_path = candidate
                     break
 
-        # Vérifier si le fichier existe
-        if not os.path.exists(cred_path):
+        options = {"projectId": settings.FIREBASE_PROJECT_ID} if settings.FIREBASE_PROJECT_ID else None
+        if os.path.exists(cred_path):
+            cred = credentials.Certificate(cred_path)
+        elif settings.FIREBASE_USE_ADC or os.getenv("K_SERVICE"):
+            # Cloud Run (K_SERVICE défini) : identité du service, aucun fichier de clé à déployer
+            cred = credentials.ApplicationDefault()
+        else:
             print(f"⚠️ Fichier de clé Firebase non trouvé: {cred_path}")
             print("   Le service fonctionnera sans validation Firebase")
             return None
-        
-        # Initialiser avec le fichier de clé
-        cred = credentials.Certificate(cred_path)
-        _firebase_app = firebase_admin.initialize_app(cred)
+
+        _firebase_app = firebase_admin.initialize_app(cred, options)
         print(f"✅ Firebase Admin SDK initialisé avec succès")
         return _firebase_app
         

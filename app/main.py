@@ -29,6 +29,27 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def _create_tables_and_seed():
+    """Crée les tables manquantes (sans toucher aux existantes) et les abonnements de base."""
+    from app.core.database import SessionLocal
+    from app.models import Subscription
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        defaults = [
+            dict(subscription_name="Free", subscription_price=0.0, subscription_duration=0,
+                 max_scans_per_day=5, max_scans_per_month=50, is_premium=False),
+            dict(subscription_name="Premium", subscription_price=9.99, subscription_duration=30,
+                 max_scans_per_day=100, max_scans_per_month=3000, is_premium=True),
+        ]
+        for sub in defaults:
+            if not db.query(Subscription).filter(Subscription.subscription_name == sub["subscription_name"]).first():
+                db.add(Subscription(**sub))
+        db.commit()
+        logger.info("✅ Tables et abonnements vérifiés")
+    finally:
+        db.close()
+
 async def periodic_cleanup():
     while True:
         await asyncio.sleep(3600)
@@ -47,6 +68,9 @@ async def lifespan(app: FastAPI):
         logger.warning(f"⚠️ Erreur initialisation Firebase: {e}")
         logger.warning("   Le service continuera sans validation Firebase")
     
+    if settings.AUTO_CREATE_TABLES:
+        _create_tables_and_seed()
+
     # Création des dossiers d'upload
     for path in [settings.UPLOAD_PATH, f"{settings.UPLOAD_PATH}/audio",
                  f"{settings.UPLOAD_PATH}/images", f"{settings.UPLOAD_PATH}/videos"]:
