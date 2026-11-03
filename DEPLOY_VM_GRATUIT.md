@@ -131,6 +131,14 @@ wsl bash /mnt/d/valeon/valeon-build.sh https://34-123-45-67.sslip.io/api --offli
   puis téléchargez le fichier avec le bouton **Télécharger le fichier** de la fenêtre SSH.
 - **Mises à jour de sécurité Ubuntu** : `sudo apt update && sudo apt upgrade -y` de temps en temps.
 
+## Si la VM gratuite ne suffit plus
+
+- **Trop lent / mémoire insuffisante** : Oracle Cloud « Always Free » propose une VM gratuite
+  bien plus puissante (ARM, jusqu'à 4 cœurs et 24 Go de RAM) ; ce même dossier `deploy/vm`
+  y fonctionne à l'identique (Docker + Caddy).
+- **Beaucoup d'utilisateurs** : passer à Cloud Run + Cloud SQL ([DEPLOY_CLOUD_RUN.md](DEPLOY_CLOUD_RUN.md),
+  payant). Pour migrer les données, exporter `valeon.db` (voir « Sauvegarder la base »).
+
 ## Problèmes fréquents
 
 | Symptôme | Solution |

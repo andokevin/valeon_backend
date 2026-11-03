@@ -1,4 +1,9 @@
-# Déployer l'API Valeon sur Google Cloud (Cloud Run + Cloud SQL)
+# Déployer l'API Valeon sur Google Cloud (Cloud Run + Cloud SQL) — option PAYANTE
+
+> ⚠️ **Cette option coûte environ 10 à 15 $/mois** (la base Cloud SQL n'a pas d'offre gratuite).
+> Pour un hébergement **gratuit**, suivez **[DEPLOY_VM_GRATUIT.md](DEPLOY_VM_GRATUIT.md)**
+> (VM e2-micro « Always Free »). Ce guide reste utile si l'application grandit et a besoin
+> d'un service plus rapide et sans maintenance.
 
 Tout se fait dans **Cloud Shell**, le terminal de Google Cloud dans le navigateur :
 la construction de l'image se fait chez Google, rien de lourd n'est téléchargé sur votre PC.

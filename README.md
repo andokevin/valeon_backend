@@ -16,6 +16,13 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 Le scan vidéo nécessite `ffmpeg` installé sur le serveur. La transcription audio locale
 nécessite en plus `pip install openai-whisper` (optionnel, environ 2 Go).
 
+## Déploiement
+
+| Guide | Coût | Pour qui |
+|---|---|---|
+| **[DEPLOY_VM_GRATUIT.md](DEPLOY_VM_GRATUIT.md)** (recommandé) | Gratuit (VM e2-micro « Always Free », SQLite, HTTPS via Caddy) | Lancement, peu d'utilisateurs |
+| [DEPLOY_CLOUD_RUN.md](DEPLOY_CLOUD_RUN.md) | ~10-15 $/mois (Cloud Run + Cloud SQL MySQL) | Application qui grandit, sans maintenance de serveur |
+
 ## Configuration
 
 - `.env` : voir `.env.example`. En production : `ENVIRONMENT=production`, `DEBUG=false`
