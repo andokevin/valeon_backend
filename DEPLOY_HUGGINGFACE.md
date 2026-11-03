@@ -1,4 +1,8 @@
-# Déployer l'API Valeon gratuitement sur Hugging Face Spaces
+# Déployer l'API Valeon sur Hugging Face Spaces
+
+> ⚠️ **Hugging Face demande désormais l'abonnement PRO (payant) pour les Spaces Docker.**
+> Pour un hébergement gratuit, suivez **[DEPLOY_RENDER.md](DEPLOY_RENDER.md)** (Render + Neon).
+> La partie « Neon » ci-dessous (étape 4 bis) reste valable pour Render.
 
 Gratuit, **sans carte bancaire**, avec une adresse HTTPS fournie par Hugging Face
 (`https://<utilisateur>-valeon-api.hf.space`). Tout se fait dans le navigateur : le Space ne
