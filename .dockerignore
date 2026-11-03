@@ -1,6 +1,7 @@
 # Secrets : fournis à Cloud Run par Secret Manager, jamais dans l'image
 .env
 .env.*
+**/.env
 !.env.example
 serviceAccountKey.json
 app/serviceAccountKey.json

@@ -1,0 +1,7 @@
+# Caddy obtient et renouvelle seul un certificat HTTPS gratuit (Let's Encrypt) pour $DOMAIN
+{$DOMAIN} {
+	reverse_proxy api:8080
+	request_body {
+		max_size 60MB
+	}
+}

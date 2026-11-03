@@ -14,7 +14,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
-RUN useradd --create-home valeon && mkdir -p uploads && chown -R valeon /app
+# /data : base SQLite persistante (hébergement VM gratuit, voir DEPLOY_VM_GRATUIT.md)
+RUN useradd --create-home valeon && mkdir -p uploads /data && chown -R valeon /app /data
 USER valeon
 
 # --proxy-headers : derrière le proxy Google, utiliser la vraie IP du client (rate limit)

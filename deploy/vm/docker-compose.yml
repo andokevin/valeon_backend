@@ -1,0 +1,28 @@
+# Hébergement gratuit sur une VM e2-micro : API + Caddy (HTTPS automatique)
+# Lancement : docker compose up -d --build   (depuis ce dossier, avec un fichier .env à côté)
+services:
+  api:
+    build: ../..
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - valeon-data:/data          # base SQLite
+    mem_limit: 600m
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data           # certificats HTTPS
+    depends_on:
+      - api
+
+volumes:
+  valeon-data:
+  caddy-data:
