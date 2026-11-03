@@ -20,7 +20,8 @@ nécessite en plus `pip install openai-whisper` (optionnel, environ 2 Go).
 
 | Guide | Coût | Pour qui |
 |---|---|---|
-| **[DEPLOY_VM_GRATUIT.md](DEPLOY_VM_GRATUIT.md)** (recommandé) | Gratuit (VM e2-micro « Always Free », SQLite, HTTPS via Caddy) | Lancement, peu d'utilisateurs |
+| **[DEPLOY_HUGGINGFACE.md](DEPLOY_HUGGINGFACE.md)** (utilisé actuellement) | Gratuit, sans carte bancaire (Hugging Face Spaces). Données effacées à chaque redémarrage | Tests, démo |
+| [DEPLOY_VM_GRATUIT.md](DEPLOY_VM_GRATUIT.md) | Gratuit avec un compte de facturation Google actif (VM e2-micro « Always Free », SQLite, HTTPS via Caddy) | Lancement, peu d'utilisateurs, données conservées |
 | [DEPLOY_CLOUD_RUN.md](DEPLOY_CLOUD_RUN.md) | ~10-15 $/mois (Cloud Run + Cloud SQL MySQL) | Application qui grandit, sans maintenance de serveur |
 
 ## Configuration
