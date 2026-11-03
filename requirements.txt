@@ -19,8 +19,6 @@ httpx
 celery
 Pillow
 google-genai
-google-cloud-vision
-opencv-python-headless
 firebase-admin>=6.0.0
 # Optionnel (transcription audio locale, installe PyTorch ~2 Go) :
 # openai-whisper

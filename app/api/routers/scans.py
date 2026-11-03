@@ -10,6 +10,7 @@ from app.models import Scan, User, Content
 from app.api.dependencies.auth import get_current_user
 from app.core.orchestrator.main_orchestrator import MainOrchestrator
 from app.core.websocket.manager import manager
+from app.core.modules.spotify.client import spotify_search_url
 
 router = APIRouter(prefix="/scans", tags=["Scans"])
 orchestrator = MainOrchestrator()
@@ -34,6 +35,26 @@ async def _save_file(upload: UploadFile, subfolder: str) -> str:
             await f.write(chunk)
     return path
 
+VIDEO_CONTENT_TYPES = {"movie", "tv_show", "movie_poster", "movie_scene", "tv_show_scene", "movie_dialogue"}
+
+def _ensure_spotify_link(result: dict) -> None:
+    """
+    Garantit un lien « Écouter sur Spotify » pour les musiques, même quand l'API
+    Spotify n'a rien donné (identifiant ACRCloud absent, API refusée en 403…).
+    """
+    if not result or not result.get("title") or result.get("type") in VIDEO_CONTENT_TYPES:
+        return
+    if result.get("type") != "music" and not result.get("artist"):
+        return
+    spotify = result.get("spotify") if isinstance(result.get("spotify"), dict) else {}
+    if spotify.get("spotify_url") or spotify.get("spotify_id") or (spotify.get("external_urls") or {}).get("spotify"):
+        return
+    url = spotify_search_url(result.get("title"), result.get("artist"))
+    if url:
+        result["spotify"] = {**spotify, "spotify_url": url,
+                             "title": result.get("title"), "artist": result.get("artist")}
+        result.setdefault("external_links", {})["spotify"] = url
+
 async def _create_scan(db: Session, scan_type: str, source: str, file_path: str, user_id: int) -> Scan:
     scan = Scan(scan_type=scan_type, input_source=source, file_path=file_path,
                 file_size=os.path.getsize(file_path), scan_user=user_id, status="processing")
@@ -46,6 +67,7 @@ async def _process(scan_id: int, file_path: str, media_type: str, user_id: int):
     try:
         user = db.query(User).filter(User.user_id == user_id).first()
         result = await orchestrator.process_scan(file_path, media_type, user, db)
+        _ensure_spotify_link(result)
 
         # ===== AJOUT: CRÉER OU RÉCUPÉRER LE CONTENU =====
         content_id = None
@@ -132,24 +154,6 @@ async def scan_audio(
     db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
 ):
     return await _start_scan("audio", "audio", settings.ALLOWED_AUDIO_EXTENSIONS, "audio",
-                             file, source, background_tasks, db, current_user)
-
-@router.post("/image", status_code=202)
-async def scan_image(
-    background_tasks: BackgroundTasks,
-    file: UploadFile = File(...), source: str = Form("file"),
-    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
-):
-    return await _start_scan("image", "images", settings.ALLOWED_IMAGE_EXTENSIONS, "image",
-                             file, source, background_tasks, db, current_user)
-
-@router.post("/video", status_code=202)
-async def scan_video(
-    background_tasks: BackgroundTasks,
-    file: UploadFile = File(...), source: str = Form("file"),
-    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
-):
-    return await _start_scan("video", "videos", settings.ALLOWED_VIDEO_EXTENSIONS, "vidéo",
                              file, source, background_tasks, db, current_user)
 
 @router.get("/{scan_id}")

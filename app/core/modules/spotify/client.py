@@ -3,10 +3,21 @@ import asyncio
 import logging
 import time
 from typing import Optional, Dict, Any, List
+from urllib.parse import quote
 import aiohttp
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+def spotify_search_url(title: Optional[str], artist: Optional[str] = None) -> Optional[str]:
+    """
+    Lien vers la recherche Spotify (web et app). Ne passe pas par l'API Spotify :
+    fonctionne même quand l'API est refusée (403 : compte propriétaire sans Premium).
+    """
+    query = " ".join(part for part in (title, artist) if part)
+    if not query.strip():
+        return None
+    return f"https://open.spotify.com/search/{quote(query)}"
 
 class SpotifyClient:
     BASE_URL = "https://api.spotify.com/v1"
@@ -59,6 +70,8 @@ class SpotifyClient:
                 ) as resp:
                     if resp.status == 200:
                         return await resp.json()
+                    # Ex. 403 « Active premium subscription required for the owner of the app »
+                    logger.warning(f"Spotify API {endpoint}: HTTP {resp.status} {(await resp.text())[:150]}")
         except Exception as e:
             logger.error(f"Spotify API error: {e}")
         return None
@@ -104,83 +117,13 @@ class SpotifyClient:
         logger.info(f"✅ Spotify track: {result['title']} - {result['artist']}")
         return result
 
-    # ===== NOUVELLE MÉTHODE: get_recommendations =====
     async def get_recommendations(self, seed_tracks: List[str], limit: int = 5) -> List[Dict[str, Any]]:
         """
-        Obtient des recommandations basées sur des pistes.
+        Spotify a retiré l'endpoint /recommendations pour les nouvelles applications
+        (réponse 404) : on renvoie une liste vide pour que l'appelant passe à Gemini
+        ou à la base locale, au lieu de faux résultats.
         """
-        if not self.enabled:
-            return self._mock_recommendations(seed_tracks, limit)
-        
-        try:
-            params = {
-                'limit': limit,
-                'seed_tracks': ','.join(seed_tracks)
-            }
-            
-            result = await self._get('recommendations', params)
-            if not result or 'tracks' not in result:
-                return []
-            
-            recommendations = []
-            for track in result['tracks'][:limit]:
-                recommendations.append({
-                    'title': track.get('name'),
-                    'artist': track['artists'][0]['name'] if track.get('artists') else None,
-                    'album': track['album'].get('name') if track.get('album') else None,
-                    'image': track['album']['images'][0]['url'] if track.get('album') and track['album'].get('images') else None,
-                    'spotify_id': track.get('id'),
-                    'preview_url': track.get('preview_url'),
-                    'popularity': track.get('popularity'),
-                    'type': 'music',
-                    'reason': 'Recommandé par Spotify'
-                })
-            
-            logger.info(f"✅ {len(recommendations)} recommandations Spotify trouvées")
-            return recommendations
-            
-        except Exception as e:
-            logger.error(f"Erreur get_recommendations: {e}")
-            return self._mock_recommendations(seed_tracks, limit)
-
-    def _mock_recommendations(self, seed_tracks: List[str], limit: int) -> List[Dict[str, Any]]:
-        """Génère des recommandations mock pour le développement"""
-        mock_recommendations = [
-            {
-                'title': 'Shape of You',
-                'artist': 'Ed Sheeran',
-                'album': '÷ (Deluxe)',
-                'image': None,
-                'spotify_id': 'mock_spotify_1',
-                'preview_url': None,
-                'popularity': 95,
-                'type': 'music',
-                'reason': 'Chanson pop populaire'
-            },
-            {
-                'title': 'Blinding Lights',
-                'artist': 'The Weeknd',
-                'album': 'After Hours',
-                'image': None,
-                'spotify_id': 'mock_spotify_2',
-                'preview_url': None,
-                'popularity': 98,
-                'type': 'music',
-                'reason': 'Hit mondial'
-            },
-            {
-                'title': 'Dance Monkey',
-                'artist': 'Tones and I',
-                'album': 'The Kids Are Coming',
-                'image': None,
-                'spotify_id': 'mock_spotify_3',
-                'preview_url': None,
-                'popularity': 92,
-                'type': 'music',
-                'reason': 'Chanson virale'
-            }
-        ]
-        return mock_recommendations[:limit]
+        return []
 
     async def search_track(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
         if not self.enabled:

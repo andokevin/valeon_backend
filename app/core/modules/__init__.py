@@ -6,15 +6,13 @@ from .spotify import SpotifyClient
 from .tmdb import TMDBClient
 from .justwatch import JustWatchClient
 from .youtube import client as YouTubeClient
-from .vision.client import CloudVisionClient 
 
 __all__ = [
-    "GeminiClient", 
-    "WhisperClient",  
-    "ACRCloudClient", 
-    "SpotifyClient", 
+    "GeminiClient",
+    "WhisperClient",
+    "ACRCloudClient",
+    "SpotifyClient",
     "TMDBClient",
-    "JustWatchClient", 
+    "JustWatchClient",
     "YouTubeClient",
-    "CloudVisionClient",  
 ]

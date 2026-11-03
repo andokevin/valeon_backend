@@ -38,28 +38,38 @@ class GeminiClient:
             logger.warning("GeminiClient: Non configuré, mode mock")
             self.client = None
 
+    # Surcharge passagère (503) : quelques nouvelles tentatives avant d'abandonner
+    RETRY_DELAYS_SECONDS = (1.5, 4.0)
+
     async def _call_with_model(self, model: str, contents: Any, config: dict) -> Any:
         """Appelle Gemini avec un modèle spécifique."""
-        try:
-            logger.debug(f"GeminiClient: Appel du modèle {model}")
-            response = await asyncio.to_thread(
-                self.client.models.generate_content,
-                model=model,
-                contents=contents,
-                config=config
-            )
-            return response
-        except Exception as e:
-            error_str = str(e).lower()
-            
-            # Quota épuisé (429) ou modèle surchargé / indisponible (503) : on bascule sur le fallback
-            if any(s in error_str for s in ("429", "quota", "resource exhausted", "503", "unavailable", "overloaded", "high demand")):
-                logger.warning(f"GeminiClient: {model} indisponible (quota ou surcharge): {e}")
-                return type('QuotaError', (), {'error': 'quota_exceeded', 'status_code': 429})()
-            
-            # Autres erreurs
-            logger.error(f"GeminiClient: Erreur avec {model}: {e}")
-            raise
+        for attempt in range(len(self.RETRY_DELAYS_SECONDS) + 1):
+            try:
+                logger.debug(f"GeminiClient: Appel du modèle {model}")
+                response = await asyncio.to_thread(
+                    self.client.models.generate_content,
+                    model=model,
+                    contents=contents,
+                    config=config
+                )
+                return response
+            except Exception as e:
+                error_str = str(e).lower()
+                overloaded = any(s in error_str for s in ("503", "unavailable", "overloaded", "high demand"))
+                if overloaded and attempt < len(self.RETRY_DELAYS_SECONDS):
+                    delay = self.RETRY_DELAYS_SECONDS[attempt]
+                    logger.warning(f"GeminiClient: {model} surchargé, nouvel essai dans {delay}s")
+                    await asyncio.sleep(delay)
+                    continue
+
+                # Quota épuisé (429) ou surcharge persistante (503) : on bascule sur le fallback
+                if overloaded or any(s in error_str for s in ("429", "quota", "resource exhausted")):
+                    logger.warning(f"GeminiClient: {model} indisponible (quota ou surcharge): {e}")
+                    return type('QuotaError', (), {'error': 'quota_exceeded', 'status_code': 429})()
+
+                # Autres erreurs
+                logger.error(f"GeminiClient: Erreur avec {model}: {e}")
+                raise
 
     async def generate_text(
         self,
@@ -426,7 +436,7 @@ class GeminiClient:
     ) -> Dict[str, Any]:
         """Version chat avec historique."""
         if not self.enabled or not self.client:
-            return {"text": "Service non disponible"}
+            return {"text": self.UNAVAILABLE_MESSAGE, "unavailable": True}
 
         try:
             # Construire la conversation
@@ -463,9 +473,11 @@ class GeminiClient:
                             "temperature": 0.7,
                         }
                     )
-            
+
+            if hasattr(response, 'error'):
+                return {"text": self.UNAVAILABLE_MESSAGE, "unavailable": True}
             return {"text": response.text}
-            
+
         except Exception as e:
             logger.error(f"GeminiClient: Erreur chat: {e}")
             return {"text": "Désolé, une erreur est survenue."}
@@ -481,17 +493,18 @@ class GeminiClient:
             "total_requests": self.primary_requests + self.fallback_requests
         }
 
+    UNAVAILABLE_MESSAGE = (
+        "Le service d'intelligence artificielle est momentanément surchargé. "
+        "Réessayez dans quelques instants."
+    )
+
     def _mock_response(self, prompt: str) -> Dict[str, Any]:
-        """Réponse mock quand Gemini n'est pas disponible."""
+        """
+        Réponse quand Gemini n'est pas disponible. Aucune fausse recommandation :
+        les appelants voient une liste vide et basculent sur leurs solutions de secours.
+        """
         return {
-            "text": "Mode démo - Gemini non configuré",
-            "recommendations": [
-                {
-                    "title": "Blinding Lights",
-                    "type": "music",
-                    "artist": "The Weeknd",
-                    "reason": "Tendance actuelle",
-                    "confidence": 0.9
-                }
-            ]
+            "text": self.UNAVAILABLE_MESSAGE,
+            "recommendations": [],
+            "unavailable": True,
         }

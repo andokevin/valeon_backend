@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func, desc
 from typing import List, Optional, Dict, Any
+from datetime import datetime, timedelta
 from pydantic import BaseModel
 
 from app.core.database import get_db
@@ -105,22 +106,13 @@ async def get_trending_searches(
     db: Session = Depends(get_db)
 ):
     """
-    Récupère les recherches tendances (basées sur les scans récents)
+    Titres les plus scannés ces 30 derniers jours (vraies données, pas de liste inventée)
     """
-    # Version simplifiée avec des résultats mock
-    mock_trending = [
-        {"title": "Blinding Lights", "count": 156},
-        {"title": "Inception", "count": 98},
-        {"title": "Heat Waves", "count": 87},
-        {"title": "Interstellar", "count": 76},
-        {"title": "The Weeknd", "count": 65},
-        {"title": "Christopher Nolan", "count": 54},
-        {"title": "Glass Animals", "count": 43},
-        {"title": "Daft Punk", "count": 38},
-        {"title": "Stranger Things", "count": 32},
-        {"title": "Oppenheimer", "count": 29},
-    ]
-    
-    return {
-        "trending": mock_trending[:limit]
-    }
+    since = datetime.utcnow() - timedelta(days=30)
+    rows = db.query(Content.content_title, func.count(Scan.scan_id).label("n")) \
+        .join(Scan, Scan.recognized_content_id == Content.content_id) \
+        .filter(Scan.scan_date >= since, Scan.status == "completed") \
+        .group_by(Content.content_title) \
+        .order_by(desc("n")) \
+        .limit(limit).all()
+    return {"trending": [{"title": title, "count": n} for title, n in rows]}

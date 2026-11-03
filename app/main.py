@@ -19,7 +19,7 @@ from app.core.cache import cache
 from app.core.rate_limiter import rate_limiter
 from app.core.websocket.manager import manager
 from app.api.routers import auth, scans, library, recommendations, streaming, websocket, admin, users
-from app.api.routers import chat, search, playlist 
+from app.api.routers import search, playlist
 # ===== NOUVEL IMPORT POUR FIREBASE =====
 from app.core.firebase import initialize_firebase
 
@@ -72,8 +72,7 @@ async def lifespan(app: FastAPI):
         _create_tables_and_seed()
 
     # Création des dossiers d'upload
-    for path in [settings.UPLOAD_PATH, f"{settings.UPLOAD_PATH}/audio",
-                 f"{settings.UPLOAD_PATH}/images", f"{settings.UPLOAD_PATH}/videos"]:
+    for path in [settings.UPLOAD_PATH, f"{settings.UPLOAD_PATH}/audio"]:
         os.makedirs(path, exist_ok=True)
         logger.debug(f"📁 Dossier créé/vérifié: {path}")
     
@@ -139,7 +138,6 @@ app.include_router(recommendations.router, prefix="/api")
 app.include_router(websocket.router)
 app.include_router(admin.router,           prefix="/api")
 app.include_router(users.router,           prefix="/api")
-app.include_router(chat.router,           prefix="/api")       
 app.include_router(search.router, prefix="/api")      
 app.include_router(playlist.router, prefix="/api")
 
