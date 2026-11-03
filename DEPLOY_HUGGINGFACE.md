@@ -5,13 +5,15 @@ Gratuit, **sans carte bancaire**, avec une adresse HTTPS fournie par Hugging Fac
 contient que 2 petits fichiers, et c'est Hugging Face qui télécharge le code depuis GitHub et
 construit l'image (presque aucune donnée ne passe par votre connexion).
 
+> **Architecture gratuite recommandée** : API sur **Hugging Face Spaces** + base
+> **PostgreSQL sur Neon** (gratuit, sans carte). Les données sont conservées même quand le
+> Space redémarre.
+>
 > **Limites de l'offre gratuite (CPU basic)**
 > - Le Space **se met en veille après ~48 h sans visite** ; la requête suivante le réveille
 >   (environ 1 minute d'attente).
-> - **La base SQLite est effacée à chaque redémarrage** (veille, reconstruction, maintenance).
->   Les utilisateurs doivent alors se réinscrire. Pour garder les données, activer le
->   **stockage persistant** (payant) dans les réglages du Space : il est monté sur `/data`,
->   où se trouve déjà la base — aucune autre modification n'est nécessaire.
+> - **Sans Neon** (étape 4 bis), la base SQLite interne est **effacée à chaque redémarrage**
+>   (veille, reconstruction, maintenance) et les utilisateurs doivent se réinscrire.
 
 ## 0. Avant de commencer
 
@@ -63,9 +65,29 @@ Onglet **Settings** → section **Variables and secrets** → **New secret** (de
 | `VALEON_ENV` | tout le contenu de votre fichier `.env` |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | tout le contenu de `serviceAccountKey.json` (de `{` à `}`) |
 
-Les réglages de production (base SQLite, `ENVIRONMENT=production`, `DEBUG=False`, Redis
-désactivé…) sont déjà dans le Dockerfile et passent avant ceux de votre `.env` : inutile de
-modifier votre `.env` avant de le coller.
+Les réglages de production (`ENVIRONMENT=production`, `DEBUG=False`, Redis désactivé,
+base SQLite par défaut…) sont déjà dans le Dockerfile et passent avant ceux de votre `.env` :
+inutile de modifier votre `.env` avant de le coller.
+
+## 4 bis. Base de données permanente avec Neon (recommandé, gratuit)
+
+1. Créez un compte sur https://neon.tech (connexion avec Google ou GitHub possible, sans carte).
+2. **Create project** : nom `valeon`, version PostgreSQL proposée par défaut, région
+   **AWS Europe (Frankfurt)** ou la plus proche des utilisateurs.
+3. Sur le tableau de bord du projet, bouton **Connect** : copiez la **connection string**,
+   de la forme
+   `postgresql://neondb_owner:xxxxxxxx@ep-xxxx.eu-central-1.aws.neon.tech/neondb?sslmode=require`
+4. Dans le Space → **Settings → Variables and secrets → New secret** :
+
+   | Name | Value |
+   |---|---|
+   | `DATABASE_URL` | la connection string Neon, collée telle quelle |
+
+   Ce secret remplace la base SQLite temporaire. Les tables et les abonnements Free/Premium
+   sont créés automatiquement au premier démarrage.
+
+Neon met la base en pause quand elle ne sert pas et la réveille en une seconde environ à la
+requête suivante : rien à faire de votre côté.
 
 ## 5. Attendre la construction
 
@@ -95,7 +117,10 @@ inutile de recompiler l'APK après une mise à jour du backend.
 
 1. `git push` sur GitHub (depuis votre PC).
 2. Space → **Settings** → **Factory rebuild** : le Space récupère le nouveau code et se reconstruit.
-   ⚠️ La base est remise à zéro (sauf stockage persistant).
+   Avec Neon, les données sont conservées ; sans Neon, la base SQLite est remise à zéro.
+
+**Sauvegarde des données Neon** : tableau de bord Neon → **Branches** permet de restaurer la
+base à un instant passé (historique limité sur l'offre gratuite).
 
 Pour changer une clé : **Settings → Variables and secrets** → modifiez `VALEON_ENV`,
 le Space redémarre tout seul.
@@ -107,6 +132,7 @@ le Space redémarre tout seul.
 | Construction en échec sur `ADD https://api.github.com/...` | Limite de requêtes GitHub atteinte (rare) : relancer **Factory rebuild** un peu plus tard |
 | Construction en échec sur `git clone` | Vérifier que le dépôt GitHub `valeon_backend` est **public** et à jour |
 | `/health` : `"firebase": "disabled"` | Vérifier le nom exact du secret `FIREBASE_SERVICE_ACCOUNT_JSON` et que tout le JSON a été collé |
-| L'app est déconnectée / « Utilisateur introuvable » | Le Space a redémarré et la base a été vidée : se réinscrire (ou activer le stockage persistant) |
+| L'app est déconnectée / « Utilisateur introuvable » | Sans Neon : le Space a redémarré et la base SQLite a été vidée. Ajouter le secret `DATABASE_URL` (étape 4 bis) |
+| `/health` : `"database": "error"` avec Neon | Vérifier que la connection string est complète (avec `?sslmode=require`) et que le projet Neon n'a pas été supprimé |
 | Première requête très lente | Le Space sortait de veille : normal après 48 h d'inactivité |
 | Scan image / chat en mode « démo » | Clé Gemini invalide dans `VALEON_ENV`, ou modèle surchargé (réessayer) |
