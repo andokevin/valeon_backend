@@ -1,8 +1,11 @@
 import firebase_admin
 from firebase_admin import credentials, auth
 from fastapi import HTTPException
+import logging
 import os
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 # Variable globale pour l'initialisation
 _firebase_app = None
@@ -63,17 +66,21 @@ def verify_firebase_token(id_token: str):
             # Ne jamais accepter un token non vérifié (sinon usurpation de compte)
             raise HTTPException(status_code=503, detail="Connexion sociale indisponible (Firebase non configuré)")
 
-        # Vérifier le token
-        decoded_token = auth.verify_id_token(id_token)
+        # Tolérance d'horloge : sans elle, un serveur en retard d'une seconde sur Google
+        # refuse le jeton tout juste émis (« Token used too early »)
+        decoded_token = auth.verify_id_token(id_token, clock_skew_seconds=30)
         return decoded_token
 
     except HTTPException:
         raise
     except auth.ExpiredIdTokenError:
         raise HTTPException(status_code=401, detail="Token Firebase expiré")
-    except auth.InvalidIdTokenError:
-        raise HTTPException(status_code=401, detail="Token Firebase invalide")
     except auth.RevokedIdTokenError:
         raise HTTPException(status_code=401, detail="Token Firebase révoqué")
+    except auth.InvalidIdTokenError as e:
+        # La raison exacte (projet, audience, horloge…) n'est visible que dans les logs
+        logger.warning(f"Token Firebase refusé : {e}")
+        raise HTTPException(status_code=401, detail="Token Firebase invalide")
     except Exception as e:
+        logger.error(f"Erreur de vérification Firebase : {e}")
         raise HTTPException(status_code=401, detail=f"Erreur de vérification: {str(e)}")
